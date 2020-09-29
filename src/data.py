@@ -160,7 +160,9 @@ def make_transform(
 
 
 class CarsDataModule(pl.LightningDataModule):
-    def __init__(self, root, classes, test_classes, transform=None, batch_size:int=32) -> None:
+    def __init__(
+        self, root, classes, test_classes, transform=None, batch_size: int = 32
+    ) -> None:
         super().__init__()
         self.transform = transform if transform else make_transform()
         self.root = root
@@ -179,13 +181,17 @@ class CarsDataModule(pl.LightningDataModule):
         dataset = CarsDataset(
             root=self.root, classes=self.classes, transform=self.transform
         )
-        return DataLoader(dataset=dataset, batch_size=self.batch_size)
+        return DataLoader(
+            dataset=dataset, batch_size=self.batch_size, num_workers=os.cpu_count()
+        )
 
     def test_dataloader(self):
         dataset = CarsDataset(
             root=self.root, classes=self.test_classes, transform=self.transform
         )
-        return DataLoader(dataset=dataset, batch_size=self.batch_size)
+        return DataLoader(
+            dataset=dataset, batch_size=self.batch_size, num_workers=os.cpu_count()
+        )
 
 
 class UPMCFood101DataModule(pl.LightningDataModule):

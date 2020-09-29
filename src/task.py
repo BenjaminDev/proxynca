@@ -8,6 +8,7 @@ from torch.optim import lr_scheduler
 
 from evaluation import assign_by_euclidian_at_k, calc_recall_at_k
 
+
 def binarize_and_smooth_labels(T, nb_classes, smoothing_const=0.1):
     # Optional: BNInception uses label smoothing, apply it for retraining also
     # "Rethinking the Inception Architecture for Computer Vision", p. 6
@@ -79,7 +80,7 @@ class DML(pl.LightningModule):
         return [torch.stack(A[i]) for i in range(len(A))]
 
     def test_step(self, batch, batch_idx) -> EvalResult:
-        X, T, *_  = self.predict_batchwise(batch)
+        X, T, *_ = self.predict_batchwise(batch)
 
         Y = assign_by_euclidian_at_k(X, T, min(8, len(batch)))
         Y = torch.from_numpy(Y)
@@ -89,10 +90,11 @@ class DML(pl.LightningModule):
         for k in [1, 2, 4, 8]:
             r_at_k = calc_recall_at_k(T, Y, k)
             recall.append(r_at_k)
-            logs[f"R@{k}"] = r_at_k #f"{r_at_k:.3f}"
+            logs[f"R@{k}"] = r_at_k  # f"{r_at_k:.3f}"
             # logging.info("R@{} : {:.3f}".format(k, 100 * r_at_k))
         # result.log_dict(logs)
         return logs
+
     # def validation_step(self, batch, batch_idx):
     #     images, target = batch
     #     output = self(images)
