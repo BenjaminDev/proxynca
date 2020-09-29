@@ -1,0 +1,7 @@
+name: "ProxyNCA"
+dataset:
+  - name: "Cars"
+  - root: "/mnt/c/Users/benja/workspace/data/cars" 
+  classes:
+    - train: "(0, 98)"
+    - eval: "(98, 196)"
