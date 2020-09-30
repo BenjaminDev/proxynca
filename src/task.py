@@ -1,6 +1,9 @@
+from logging import log
+from numpy.core.shape_base import stack
 import pytorch_lightning as pl
 from pytorch_lightning import EvalResult, TrainResult
 import torch
+from torch import tensor
 import torch.nn.functional as F
 from torch.nn import Parameter
 from torch import optim
@@ -55,6 +58,8 @@ class DML(pl.LightningModule):
         self.criterion = criterion
 
         self.save_hyperparameters()
+        self.test_Xs = torch.empty(0)
+        self.test_Ts = torch.empty(0)
 
     def forward(self, x):
         return self.model(x)
@@ -85,20 +90,28 @@ class DML(pl.LightningModule):
         return [torch.stack(A[i]) for i in range(len(A))]
 
     def test_step(self, batch, batch_idx) -> EvalResult:
+
         X, T, *_ = self.predict_batchwise(batch)
-        breakpoint()
-        Y = assign_by_euclidian_at_k(X, T, min(8, len(batch)))
+        self.test_Xs = torch.cat([self.test_Xs, X])
+        self.test_Ts = torch.cat([self.test_Ts, T])
+
+        
         # Y = torch.from_numpy(Y)
         # result = pl.EvalResult()
+
+    def test_epoch_end(self, *args, **kwargs):
         recall = []
         logs = {}
+        Y = assign_by_euclidian_at_k(self.test_Xs, self.test_Ts, 8) # min(8, len(batch)))
         for k in [1, 2, 4, 8]:
-            r_at_k = calc_recall_at_k(T, Y, k)
+            r_at_k = calc_recall_at_k(self.test_Ts, Y, k)
             recall.append(r_at_k)
             logs[f"R@{k}"] = r_at_k  # f"{r_at_k:.3f}"
             # logging.info("R@{} : {:.3f}".format(k, 100 * r_at_k))
         # result.log_dict(logs)
+        print(logs)
         return logs
+
 
     # def validation_step(self, batch, batch_idx):
     #     images, target = batch

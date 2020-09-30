@@ -23,8 +23,9 @@ model = DML(
     weight_decay_proxynca=0.0,
 )
 
-trainer = Trainer(max_epochs=2, gpus=None, logger=True, fast_dev_run=False)
+trainer = Trainer(max_epochs=1, gpus=None,
+                     logger=True,
+                     fast_dev_run=False)
 
 trainer.fit(model, datamodule=dm)
 trainer.test(model, datamodule=dm)
-# trainer.test(datamodule=dm

@@ -523,7 +523,8 @@ class BNInception(nn.Module):
         self.global_pool = nn.AvgPool2d(
             7, stride=1, padding=0, ceil_mode=True, count_include_pad=True
         )
-        self.last_linear = nn.Linear(1024, nb_classes)
+        # Renamed to be consistent with model hub.
+        self.fc = nn.Linear(1024, nb_classes)
 
     def features(self, input):
         conv1_7x7_s2_out = self.conv1_7x7_s2(input)
@@ -1128,7 +1129,7 @@ class BNInception(nn.Module):
     def logits(self, features):
         x = self.global_pool(features)
         x = x.view(x.size(0), -1)
-        x = self.last_linear(x)
+        x = self.fc(x)
         return x
 
     def forward(self, input):
@@ -1158,7 +1159,7 @@ def make_embedding_layer(in_features, sz_embedding, weight_init=None):
 
 def embed(model, sz_embedding, normalize_output=True):
     model.embedding_layer = make_embedding_layer(
-        model.last_linear.in_features,
+        model.fc.in_features,
         sz_embedding,
         weight_init=None,  # bn_inception_weight_init
     )
@@ -1176,14 +1177,26 @@ def embed(model, sz_embedding, normalize_output=True):
     model.forward = forward
 
 
-def get_model(sz_embedding, pretrained=False):
+def get_inception_v2_model(sz_embedding, pretrained=False):
+    """v2 is also known as BN Batch normalized inception"""
     model = bn_inception(pretrained=pretrained)
-    embed(model, sz_embedding=sz_embedding)
-    return model
+    return embed(model, sz_embedding=sz_embedding)
+     
+
+from torchvision import models
+
+
+def get_inception_v3_model(sz_embedding, pretrained=True):
+
+    inception_v3 = models.inception_v3(pretrained=pretrained)
+    breakpoint()
+    return embed(inception_v3, sz_embedding=sz_embedding)
+
 
 
 if __name__ == "__main__":
-    model = get_model(sz_embedding=64)
+    model = get_inception_v3_model(sz_embedding=64)
+
     # breakpoint()
     # import random
     # nb_classes = 100
