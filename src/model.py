@@ -14,7 +14,7 @@ https://github.com/dichotomies/proxy-nca.
 def bn_inception(pretrained=False, **kwargs):
     model = BNInception(**kwargs)
     if pretrained:
-        model.load_state_dict(torch.load("net/bn_inception_weights_pt04.pt"))
+        model.load_state_dict(torch.load("/mnt/vol_b/models/inception/bn_inception_weights_pt04.pt"))
     return model
 
 
@@ -524,7 +524,7 @@ class BNInception(nn.Module):
             7, stride=1, padding=0, ceil_mode=True, count_include_pad=True
         )
         # Renamed to be consistent with model hub.
-        self.fc = nn.Linear(1024, nb_classes)
+        self.last_linear = nn.Linear(1024, nb_classes)
 
     def features(self, input):
         conv1_7x7_s2_out = self.conv1_7x7_s2(input)
@@ -1129,7 +1129,7 @@ class BNInception(nn.Module):
     def logits(self, features):
         x = self.global_pool(features)
         x = x.view(x.size(0), -1)
-        x = self.fc(x)
+        x = self.last_linear(x)
         return x
 
     def forward(self, input):
@@ -1159,7 +1159,7 @@ def make_embedding_layer(in_features, sz_embedding, weight_init=None):
 
 def embed(model, sz_embedding, normalize_output=True):
     model.embedding_layer = make_embedding_layer(
-        model.fc.in_features,
+        model.last_linear.in_features,
         sz_embedding,
         weight_init=None,  # bn_inception_weight_init
     )
@@ -1177,11 +1177,11 @@ def embed(model, sz_embedding, normalize_output=True):
     model.forward = forward
 
 
-def get_inception_v2_model(sz_embedding, pretrained=False):
+def get_inception_v2_model(sz_embedding, pretrained=True):
     """v2 is also known as BN Batch normalized inception"""
     model = bn_inception(pretrained=pretrained)
-    return embed(model, sz_embedding=sz_embedding)
-     
+    embed(model, sz_embedding=sz_embedding)
+    return model 
 
 from torchvision import models
 
@@ -1189,9 +1189,8 @@ from torchvision import models
 def get_inception_v3_model(sz_embedding, pretrained=True):
 
     inception_v3 = models.inception_v3(pretrained=pretrained)
-    breakpoint()
-    return embed(inception_v3, sz_embedding=sz_embedding)
-
+    embed(inception_v3, sz_embedding=sz_embedding)
+    return inception_v3
 
 
 if __name__ == "__main__":

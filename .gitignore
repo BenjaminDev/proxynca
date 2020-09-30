@@ -2,3 +2,5 @@
 challenges_RE_CV_2.txt
 *.pyc
 lightning_logs/*
+wandb/*
+few-shot/*

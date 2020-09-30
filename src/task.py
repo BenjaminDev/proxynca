@@ -8,6 +8,8 @@ import torch.nn.functional as F
 from torch.nn import Parameter
 from torch import optim
 from torch.optim import lr_scheduler
+from PIL import Image
+import wandb
 
 from evaluation import assign_by_euclidian_at_k, calc_recall_at_k
 
@@ -68,9 +70,12 @@ class DML(pl.LightningModule):
         images, target, _ = batch
         output = self(images)
 
-        loss_val = self.criterion(output, target)
-
-        return {"loss": loss_val}
+        loss = self.criterion(output, target)
+        result = TrainResult(loss)
+        result.log_dict({"train_loss": loss})
+        # result.log_dict({"examples": [wandb.Image(Image.open("/mnt/vol_b/cars/car_ims/014839.jpg"), caption="Label")]})
+        return result
+        # return {"loss": loss, "train_loss":loss.item() }
 
     def predict_batchwise(self, batch):
         # list with N lists, where N = |{image, label, index}|
@@ -92,6 +97,9 @@ class DML(pl.LightningModule):
     def test_step(self, batch, batch_idx) -> EvalResult:
 
         X, T, *_ = self.predict_batchwise(batch)
+        if self.test_Xs.device != X.device: self.test_Xs = self.test_Xs.to(X.device)
+        if self.test_Ts.device != T.device: self.test_Ts = self.test_Ts.to(T.device)
+
         self.test_Xs = torch.cat([self.test_Xs, X])
         self.test_Ts = torch.cat([self.test_Ts, T])
 
@@ -109,7 +117,8 @@ class DML(pl.LightningModule):
             logs[f"R@{k}"] = r_at_k  # f"{r_at_k:.3f}"
             # logging.info("R@{} : {:.3f}".format(k, 100 * r_at_k))
         # result.log_dict(logs)
-        print(logs)
+        # print(logs)
+
         return logs
 
 
@@ -180,7 +189,7 @@ class DML(pl.LightningModule):
         # scheduler = config['lr_scheduler']['type'](
         #     opt, **config['lr_scheduler']['args']
         # )
-        scheduler = lr_scheduler.LambdaLR(optimizer, lambda epoch: 0.1 ** (epoch // 30))
+        scheduler = lr_scheduler.ExponentialLR(optimizer, gamma=0.94)
         return [optimizer], [scheduler]
 
     # def train_dataloader(self):
