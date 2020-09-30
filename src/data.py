@@ -182,7 +182,7 @@ class CarsDataModule(pl.LightningDataModule):
             root=self.root, classes=self.classes, transform=self.transform
         )
         return DataLoader(
-            dataset=dataset, batch_size=self.batch_size, num_workers=os.cpu_count()
+            dataset=dataset, batch_size=self.batch_size, num_workers=os.cpu_count(), shuffle=True
         )
 
     def test_dataloader(self):
@@ -190,7 +190,7 @@ class CarsDataModule(pl.LightningDataModule):
             root=self.root, classes=self.test_classes, transform=self.transform
         )
         return DataLoader(
-            dataset=dataset, batch_size=self.batch_size, num_workers=os.cpu_count()
+            dataset=dataset, batch_size=self.batch_size, num_workers=os.cpu_count(), shuffle=True,
         )
 
 

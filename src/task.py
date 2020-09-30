@@ -80,10 +80,12 @@ class DML(pl.LightningModule):
         return [torch.stack(A[i]) for i in range(len(A))]
 
     def test_step(self, batch, batch_idx) -> EvalResult:
-        X, T, *_ = self.predict_batchwise(batch)
 
+        X, T, *_ = self.predict_batchwise(batch)
+        
         Y = assign_by_euclidian_at_k(X, T, min(8, len(batch)))
-        Y = torch.from_numpy(Y)
+        
+        # Y = torch.from_numpy(Y)
         # result = pl.EvalResult()
         recall = []
         logs = {}
@@ -94,6 +96,7 @@ class DML(pl.LightningModule):
             # logging.info("R@{} : {:.3f}".format(k, 100 * r_at_k))
         # result.log_dict(logs)
         return logs
+    # def on_test_end(self, *args, **kwargs):
 
     # def validation_step(self, batch, batch_idx):
     #     images, target = batch
