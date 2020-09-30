@@ -29,7 +29,7 @@ def binarize_and_smooth_labels(T, nb_classes, smoothing_const=0.1):
 
 class ProxyNCA(torch.nn.Module):
     def __init__(
-        self, nb_classes, sz_embedding, smoothing_const=0.1, scaling_x=1, scaling_p=3
+        self, nb_classes, sz_embedding, smoothing_const=0.1, scaling_x=3, scaling_p=3
     ):
         super().__init__()
         # initialize proxies s.t. norm of each proxy ~1 through div by 8
@@ -167,7 +167,7 @@ class DML(pl.LightningModule):
                 set(self.model.embedding_layer.parameters())
             )
         )
-        optimizer = optim.SGD(
+        optimizer = optim.Adam(
             [
                 {
                     "params": parameters,
