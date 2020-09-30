@@ -40,7 +40,10 @@ class ProxyNCA(torch.nn.Module):
         X = F.normalize(X, p=2, dim=-1) * self.scaling_x
         D = torch.cdist(X, P) ** 2
         T = binarize_and_smooth_labels(T, len(P), self.smoothing_const)
+        if T.device != D.device:
+            T=T.to(D.device)
         # note that compared to proxy nca, positive included in denominator
+        # breakpoint()
         loss = torch.sum(-T * F.log_softmax(-D, -1), -1)
         return loss.mean()
 
@@ -50,6 +53,7 @@ class DML(pl.LightningModule):
         super().__init__()
         self.model = model
         self.criterion = criterion
+
         self.save_hyperparameters()
 
     def forward(self, x):
@@ -58,6 +62,7 @@ class DML(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         images, target, _ = batch
         output = self(images)
+
         loss_val = self.criterion(output, target)
 
         return {"loss": loss_val}
@@ -81,9 +86,9 @@ class DML(pl.LightningModule):
 
     def test_step(self, batch, batch_idx) -> EvalResult:
         X, T, *_ = self.predict_batchwise(batch)
-
+        breakpoint()
         Y = assign_by_euclidian_at_k(X, T, min(8, len(batch)))
-        Y = torch.from_numpy(Y)
+        # Y = torch.from_numpy(Y)
         # result = pl.EvalResult()
         recall = []
         logs = {}
