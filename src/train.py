@@ -21,7 +21,7 @@ if load_from_pth and  False:
 else:   
     model = DML(
         model=get_inception_v2_model(sz_embedding=64),
-        criterion=ProxyNCA(nb_classes=10, sz_embedding=64),
+        criterion=ProxyNCA(nb_classes=dm.num_classes, sz_embedding=64),
         lr_backbone=0.001,
         weight_decay_backbone=0.0,
         lr_embedding=0.001,
@@ -33,7 +33,7 @@ else:
 wandb_logger = WandbLogger(name='Adam',project='few-shot', save_dir="/mnt/vol_b/models/few-shot")
 trainer = Trainer(max_epochs=100, gpus=1,
                      logger=wandb_logger,
-                     fast_dev_run=False,
+                     fast_dev_run=True,
                      )
 
 trainer.fit(model, datamodule=dm)

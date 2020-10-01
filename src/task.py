@@ -76,6 +76,30 @@ class DML(pl.LightningModule):
         # result.log_dict({"examples": [wandb.Image(Image.open("/mnt/vol_b/cars/car_ims/014839.jpg"), caption="Label")]})
         return result
         # return {"loss": loss, "train_loss":loss.item() }
+    def validation_step(self, batch, batch_idx) -> EvalResult:
+        X, T, *_ = self.predict_batchwise(batch)
+        return X, T
+    def validation_epoch_end(self, outputs)-> EvalResult:
+        all_Xs = torch.empty(0).to(self.device)
+        all_Ts = torch.empty(0).to(self.device)
+        for X_T in outputs:
+            X, T = X_T
+            all_Xs = torch.cat([all_Xs, X])
+            all_Ts = torch.cat([all_Ts, T])
+        
+        recall = []
+        logs = {}
+        Y = assign_by_euclidian_at_k(all_Xs, all_Ts, 8) # min(8, len(batch)))
+        for k in [1, 2, 4, 8]:
+            r_at_k = calc_recall_at_k(all_Ts, Y, k)
+            recall.append(r_at_k)
+            logs[f"R@{k}"] = r_at_k  # f"{r_at_k:.3f}"
+            # logging.info("R@{} : {:.3f}".format(k, 100 * r_at_k))
+        # result.log_dict(logs)
+        # print(logs)
+        # result = EvalResult()
+
+        return logs
 
     def predict_batchwise(self, batch):
         # list with N lists, where N = |{image, label, index}|
@@ -169,11 +193,11 @@ class DML(pl.LightningModule):
         )
         optimizer = optim.Adam(
             [
-                {
-                    "params": parameters,
-                    "lr": self.hparams.lr_backbone,
-                    "weight_decay": self.hparams.weight_decay_backbone,
-                },
+                # {
+                #     "params": parameters,
+                #     "lr": self.hparams.lr_backbone,
+                #     "weight_decay": self.hparams.weight_decay_backbone,
+                # },
                 {
                     "params": self.model.embedding_layer.parameters(),
                     "lr": self.hparams.lr_embedding,
@@ -186,84 +210,21 @@ class DML(pl.LightningModule):
                 },
             ],
         )
-        # scheduler = config['lr_scheduler']['type'](
-        #     opt, **config['lr_scheduler']['args']
-        # )
         scheduler = lr_scheduler.ExponentialLR(optimizer, gamma=0.94)
         return [optimizer], [scheduler]
 
-    # def train_dataloader(self):
-    #     normalize = transforms.Normalize(
-    #         mean=[0.485, 0.456, 0.406],
-    #         std=[0.229, 0.224, 0.225],
-    #     )
-
-    #     train_dir = os.path.join(self.data_path, 'train')
-    #     train_dataset = datasets.ImageFolder(
-    #         train_dir,
-    #         transforms.Compose([
-    #             transforms.RandomResizedCrop(224),
-    #             transforms.RandomHorizontalFlip(),
-    #             transforms.ToTensor(),
-    #             normalize,
-    #         ]))
-
-    #     train_loader = torch.utils.data.DataLoader(
-    #         dataset=train_dataset,
-    #         batch_size=self.batch_size,
-    #         shuffle=True,
-    #         num_workers=self.workers,
-    #     )
-    #     return train_loader
-
-    # def val_dataloader(self):
-    #     normalize = transforms.Normalize(
-    #         mean=[0.485, 0.456, 0.406],
-    #         std=[0.229, 0.224, 0.225],
-    #     )
-    #     val_dir = os.path.join(self.data_path, 'val')
-    #     val_loader = torch.utils.data.DataLoader(
-    #         datasets.ImageFolder(val_dir, transforms.Compose([
-    #             transforms.Resize(256),
-    #             transforms.CenterCrop(224),
-    #             transforms.ToTensor(),
-    #             normalize,
-    #         ])),
-    #         batch_size=self.batch_size,
-    #         shuffle=False,
-    #         num_workers=self.workers,
-    #     )
-    #     return val_loader
-
-    # def test_dataloader(self):
-    #     return self.val_dataloader()
-
-    # def test_step(self, *args, **kwargs):
-    #     return self.validation_step(*args, **kwargs)
-
-    # def test_epoch_end(self, *args, **kwargs):
-    #     outputs = self.validation_epoch_end(*args, **kwargs)
-
-    #     def substitute_val_keys(out):
-    #         return {k.replace('val', 'test'): v for k, v in out.items()}
-
-    #     outputs = {
-    #         'test_loss': outputs['val_loss'],
-    #         'progress_bar': substitute_val_keys(outputs['progress_bar']),
-    #         'log': substitute_val_keys(outputs['log']),
-    #     }
-    #     return outputs
 
 
-# if __name__ == '__main__':
+if __name__ == '__main__':
 
-#     import random
-#     nb_classes = 100
-#     sz_batch = 32
-#     sz_embedding = 64
-#     X = torch.randn(sz_batch, sz_embedding).cuda()
-#     P = torch.randn(nb_classes, sz_embedding).cuda()
-#     T = torch.randint(low=0, high=nb_classes, size=[sz_batch]).cuda()
-#     criterion = ProxyNCA(nb_classes, sz_embedding).cuda()
+    import random
+    nb_classes = 100
+    sz_batch = 32
+    sz_embedding = 64
+    X = torch.randn(sz_batch, sz_embedding).cuda()
+    breakpoint()
+    P = torch.randn(nb_classes, sz_embedding).cuda()
+    T = torch.randint(low=0, high=nb_classes, size=[sz_batch]).cuda()
+    criterion = ProxyNCA(nb_classes, sz_embedding).cuda()
 
-#     print(pnca(X, T.view(sz_batch)))
+    print(criterion(X, T.view(sz_batch)))

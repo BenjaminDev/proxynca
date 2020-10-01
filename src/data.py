@@ -2,7 +2,7 @@ import pytorch_lightning as pl
 from torchvision import transforms
 from torch.utils.data import dataset
 import scipy.io
-
+from typing import Union, List
 import os
 import torch
 import torchvision
@@ -169,15 +169,9 @@ class CarsDataModule(pl.LightningDataModule):
         self.test_classes = test_classes
         self.classes = classes
         self.batch_size = batch_size
-        # self.save_hyperparameters()
+        self.num_classes = len(classes)
 
     def train_dataloader(self):
-
-        # transforms = transform_lib.Compose([
-        #     transform_lib.ToTensor(),
-        #     transform_lib.Normalize(mean=(0.5,), std=(0.5,)),
-        # ])
-
         dataset = CarsDataset(
             root=self.root, classes=self.classes, transform=self.transform
         )
@@ -186,6 +180,16 @@ class CarsDataModule(pl.LightningDataModule):
             pin_memory=True
         )
 
+    def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        dataset = CarsDataset(
+            root=self.root, classes=self.classes, transform=self.transform
+        )
+        return DataLoader(
+            dataset=dataset, batch_size=self.batch_size, num_workers=os.cpu_count(), shuffle=True,
+            pin_memory=True
+        )
+
+    
     def test_dataloader(self):
         dataset = CarsDataset(
             root=self.root, classes=self.test_classes, transform=self.transform
