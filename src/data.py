@@ -11,7 +11,11 @@ import PIL.Image
 from torch.utils.data import DataLoader
 from torchvision import datasets
 import torchvision.transforms as T
+import matplotlib.pyplot as plt
+from torchvision.utils import make_grid
 
+cars_mean = (0.485, 0.456, 0.406)
+cars_std = (0.229, 0.224, 0.225)
 
 class BaseDataset(torch.utils.data.Dataset):
     def __init__(self, root, classes, transform=None):
@@ -55,6 +59,7 @@ class CarsDataset(torch.utils.data.Dataset):
 
         annos_fn = "cars_annos.mat"
         cars = scipy.io.loadmat(os.path.join(root, annos_fn))
+        self.cars = cars
         ys = [int(a[5][0] - 1) for a in cars["annotations"][0]]
         im_paths = [a[0][0] for a in cars["annotations"][0]]
         index = 0
@@ -84,10 +89,10 @@ class CarsDataset(torch.utils.data.Dataset):
     def get_label(self, index):
         return self.ys[index]
 
-    def set_subset(self, I):
-        self.ys = [self.ys[i] for i in I]
-        self.I = [self.I[i] for i in I]
-        self.im_paths = [self.im_paths[i] for i in I]
+    # def set_subset(self, I):
+    #     self.ys = [self.ys[i] for i in I]
+    #     self.I = [self.I[i] for i in I]
+    #     self.im_paths = [self.im_paths[i] for i in I]
 
 
 def std_per_channel(images):
@@ -130,8 +135,18 @@ class ScaleIntensities:
         ) + self.out_range[0]
         return tensor
 
+def make_transform(mean=cars_mean, std=cars_std):
+    normalize = transforms.Normalize(mean=mean,
+                                 std=std)
+    return transforms.Compose([
+        transforms.RandomResizedCrop(224),
+        #transforms.Resize((224,224)),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        normalize])
+    
 
-def make_transform(
+def make_transform_old(
     sz_resize=256,
     sz_crop=227,
     mean=[104, 117, 128],
@@ -171,34 +186,65 @@ class CarsDataModule(pl.LightningDataModule):
         self.batch_size = batch_size
         self.num_classes = len(classes)
 
-    def train_dataloader(self):
-        dataset = CarsDataset(
+    def setup(self):
+        self.train_dataset = CarsDataset(
             root=self.root, classes=self.classes, transform=self.transform
         )
+
+        self.val_dataset = CarsDataset(
+            root=self.root, classes=self.test_classes, transform=self.transform
+        )
+
+        self.test_dataset = CarsDataset(
+            root=self.root, classes=self.test_classes, transform=self.transform
+        )
+
+
+    def train_dataloader(self):
         return DataLoader(
-            dataset=dataset, batch_size=self.batch_size, num_workers=os.cpu_count(), shuffle=True,
+            dataset=self.train_dataset, batch_size=self.batch_size, 
+            num_workers=os.cpu_count(), shuffle=True,
             pin_memory=True
         )
 
     def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
-        dataset = CarsDataset(
-            root=self.root, classes=self.classes, transform=self.transform
-        )
+
         return DataLoader(
-            dataset=dataset, batch_size=self.batch_size, num_workers=os.cpu_count(), shuffle=True,
+            dataset=self.val_dataset, batch_size=self.batch_size, 
+            num_workers=os.cpu_count(), 
+            shuffle=False,
             pin_memory=True
         )
 
     
     def test_dataloader(self):
-        dataset = CarsDataset(
-            root=self.root, classes=self.test_classes, transform=self.transform
-        )
+        
         return DataLoader(
-            dataset=dataset, batch_size=self.batch_size, num_workers=os.cpu_count(), shuffle=False,
+            dataset=self.test_dataset, batch_size=self.batch_size, num_workers=os.cpu_count(), shuffle=False,
             pin_memory=True
         )
 
+    def show_batch(self, dl):
+        for images, labels, _ in dl:
+            fig, ax = plt.subplots(figsize=(16, 8))
+            ax.set_xticks([]); ax.set_yticks([])
+            # ax.set_xlabel("test")
+            data = self.denorm(images).clamp(0,1)
+            ax.imshow(make_grid(data, nrow=16).permute(1, 2, 0))
+            break
+
+    def show_sample(self, img, target, invert=True):
+        img = self.denorm(img).clamp(0,1)
+        if invert:
+            plt.set_xlabel("help")
+            plt.imshow(1 - img.permute((1, 2, 0)))
+        else:
+            plt.title(f"{target}")
+            plt.imshow(img.permute(1, 2, 0))
+    
+    @staticmethod
+    def denorm(img,mean=cars_mean, std=cars_std):
+        return img*torch.Tensor(std).unsqueeze(1).unsqueeze(1)+torch.Tensor(mean).unsqueeze(1).unsqueeze(1)
 
 class UPMCFood101DataModule(pl.LightningDataModule):
     def __init__(self, data_dir: str = "./data"):

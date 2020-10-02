@@ -11,8 +11,8 @@ def assign_by_euclidian_at_k(X, T, k):
     """
     distances = torch.cdist(X, X)
     # get nearest points
-    indices = distances.topk(k + 1, largest=False)[1][:, 1 : k + 1]
-    return T[indices]
+    indices = distances.topk(k + 1, largest=False)[1][:, 1: k + 1]
+    return np.array([[T[i] for i in ii] for ii in indices])
 
 
 def calc_recall_at_k(T, Y, k):

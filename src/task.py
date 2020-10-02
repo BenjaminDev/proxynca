@@ -60,46 +60,65 @@ class DML(pl.LightningModule):
         self.criterion = criterion
 
         self.save_hyperparameters()
-        self.test_Xs = torch.empty(0)
-        self.test_Ts = torch.empty(0)
+        self.test_Xs = torch.empty(0, dtype = torch.int64)
+        self.test_Ts = torch.empty(0, dtype = torch.int64)
 
     def forward(self, x):
         return self.model(x)
 
     def training_step(self, batch, batch_idx):
-        images, target, _ = batch
+        
+        images, target, index = batch
         output = self(images)
 
         loss = self.criterion(output, target)
-        result = TrainResult(loss)
+        result = TrainResult(minimize=loss)
         result.log_dict({"train_loss": loss})
         # result.log_dict({"examples": [wandb.Image(Image.open("/mnt/vol_b/cars/car_ims/014839.jpg"), caption="Label")]})
         return result
         # return {"loss": loss, "train_loss":loss.item() }
     def validation_step(self, batch, batch_idx) -> EvalResult:
-        X, T, *_ = self.predict_batchwise(batch)
-        return X, T
-    def validation_epoch_end(self, outputs)-> EvalResult:
-        all_Xs = torch.empty(0).to(self.device)
-        all_Ts = torch.empty(0).to(self.device)
-        for X_T in outputs:
-            X, T = X_T
-            all_Xs = torch.cat([all_Xs, X])
-            all_Ts = torch.cat([all_Ts, T])
-        
-        recall = []
-        logs = {}
-        Y = assign_by_euclidian_at_k(all_Xs, all_Ts, 8) # min(8, len(batch)))
-        for k in [1, 2, 4, 8]:
-            r_at_k = calc_recall_at_k(all_Ts, Y, k)
-            recall.append(r_at_k)
-            logs[f"R@{k}"] = r_at_k  # f"{r_at_k:.3f}"
-            # logging.info("R@{} : {:.3f}".format(k, 100 * r_at_k))
-        # result.log_dict(logs)
-        # print(logs)
-        # result = EvalResult()
+        images, target, index = batch
 
-        return logs
+        output = self(images)
+        val_loss = self.criterion(output,target)
+        # breakpoint()
+        # X, T, index= self.predict_batchwise(batch)
+        # breakpoint()
+        # im = Image.open(self.d[index])
+        result = EvalResult()
+        result.log_dict({"val_loss":val_loss})
+        return result
+    # def validation_epoch_end(self, outputs):
+    #     # breakpoint()
+
+    #     return {"val_loss":}
+
+    # def validation_epoch_end(self, outputs)-> EvalResult:
+    #     all_Xs = torch.empty(0).to(self.device)
+    #     all_Ts = torch.empty(0).to(self.device)
+    #     for X_T in outputs:
+    #         X, T = X_T
+    #         all_Xs = torch.cat([all_Xs, X])
+    #         all_Ts = torch.cat([all_Ts, T])
+    #     recall = []
+    #     logs = {}
+    #     breakpoint()
+    #     Y = assign_by_euclidian_at_k(all_Xs, all_Ts, 8) # min(8, len(batch)))
+    #     for k in [1, 2, 4, 8]:
+    #         r_at_k = calc_recall_at_k(all_Ts, Y, k)
+    #         recall.append(r_at_k)
+    #         logs[f"Val_R@{k}"] = r_at_k  # f"{r_at_k:.3f}"
+            
+
+    #         # logging.info("R@{} : {:.3f}".format(k, 100 * r_at_k))
+    #     # result.log_dict(logs)
+    #     # print(logs)
+    #     val_loss = self.criterion(all_Xs, all_Ts)
+    #     result = EvalResult(checkpoint_on=val_loss)
+    #     logs["val_loss"] = val_loss
+    #     result.log_dict(logs)
+    #     return result
 
     def predict_batchwise(self, batch):
         # list with N lists, where N = |{image, label, index}|
@@ -134,9 +153,10 @@ class DML(pl.LightningModule):
     def test_epoch_end(self, *args, **kwargs):
         recall = []
         logs = {}
-        Y = assign_by_euclidian_at_k(self.test_Xs, self.test_Ts, 8) # min(8, len(batch)))
+        Y = assign_by_euclidian_at_k(self.test_Xs.cpu(), self.test_Ts.cpu(), 8) # min(8, len(batch)))
+        Y = torch.from_numpy(Y)
         for k in [1, 2, 4, 8]:
-            r_at_k = calc_recall_at_k(self.test_Ts, Y, k)
+            r_at_k = 100*calc_recall_at_k(self.test_Ts.cpu(), Y, k)
             recall.append(r_at_k)
             logs[f"R@{k}"] = r_at_k  # f"{r_at_k:.3f}"
             # logging.info("R@{} : {:.3f}".format(k, 100 * r_at_k))
@@ -193,23 +213,27 @@ class DML(pl.LightningModule):
         )
         optimizer = optim.Adam(
             [
-                # {
-                #     "params": parameters,
-                #     "lr": self.hparams.lr_backbone,
-                #     "weight_decay": self.hparams.weight_decay_backbone,
-                # },
+                {
+                    "params": parameters,
+                    "lr": self.hparams.lr_backbone,
+                    "eps": 1.0,
+                    "weight_decay": self.hparams.weight_decay_backbone,
+                },
                 {
                     "params": self.model.embedding_layer.parameters(),
                     "lr": self.hparams.lr_embedding,
+                    "eps": 1.0,
                     "weight_decay": self.hparams.weight_decay_embedding,
                 },
                 {
                     "params": self.criterion.parameters(),
-                    "lr": self.hparams.lr_proxynca,
+                    "lr": self.hparams.lr,
+                    "eps": 1.0,
                     "weight_decay": self.hparams.weight_decay_proxynca,
                 },
             ],
         )
+
         scheduler = lr_scheduler.ExponentialLR(optimizer, gamma=0.94)
         return [optimizer], [scheduler]
 
