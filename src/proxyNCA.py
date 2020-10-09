@@ -52,29 +52,57 @@ class ProxyNCA(torch.nn.Module):
         # breakpoint()
         loss = torch.sum(-T * F.log_softmax(-D, -1), -1)
         return loss.mean()
+from torchvision import models
+from torch.nn import Identity
 
+def get_inception_v3_model(pretrained=True):
+
+    inception_v3 = models.inception_v3(pretrained=pretrained)
+    
+    return inception_v3
 
 class DML(pl.LightningModule):
-    def __init__(self, model, criterion, **kwargs) -> None:
+    def __init__(self, *,nb_classes:int, sz_embedding:int=64, backbone:str="inception_v3", **kwargs) -> None:
         super().__init__()
-        self.model = model
-        self.criterion = criterion
-
         self.save_hyperparameters()
-        self.test_Xs = torch.empty(0, dtype = torch.int64)
-        self.test_Ts = torch.empty(0, dtype = torch.int64)
-        self.val_Xs = torch.empty(0, dtype = torch.int64)
-        self.val_Ts = torch.empty(0, dtype = torch.int64)
+        
+        # Backbone:
+        if backbone == "inception_v3":
+            self.backbone = models.inception_v3(pretrained=self.hparams.pretrained or True)
+            breakpoint()
+            # self.backbone.fc = torch.nn.Identity
+            # self.backbone = torch.nn.Sequential(*list(self.backbone.children())[:-1]) # remove fc layer
+            self.in_features = 2048 
+        else: raise NotImplementedError(f"backbone {backbone} is not supported!")
+
+        # self.global_pool = torch.nn.AvgPool2d (7, stride=1, padding=0, ceil_mode=True, count_include_pad=True)
+        self.embedding_layer = torch.nn.Linear(in_features=self.in_features, out_features=sz_embedding)
+        self.proxies = Parameter(torch.randn(nb_classes, sz_embedding) / 8)
 
     def forward(self, x):
-        return self.model(x)
+        # breakpoint()
+        x = self.backbone(x)
+        # x = self.global_pool(x)
+        # x = x.view(x.size(0), -1)
+        # x = self.embedding_layer(x)
+        # if normalize_output == True:
+        #     x = torch.nn.functional.normalize(x, p=2, dim=1)
+        return x
+
 
     def training_step(self, batch, batch_idx):
         
         images, target, index = batch
-        output = self(images)
+        # breakpoint()
+        X = self(images)
 
-        loss = self.criterion(output, target)
+        P = F.normalize(self.proxies, p = 2, dim = -1) * self.hparams.scaling_p
+        X = F.normalize(X, p = 2, dim = -1) * self.hparams.scaling_x
+        D = torch.cdist(X, P) ** 2
+        T = binarize_and_smooth_labels(target, len(P), self.smoothing_const)
+        # note that compared to proxy nca, positive included in denominator
+        loss = torch.sum(-T * F.log_softmax(-D, -1), -1)
+
         result = TrainResult(minimize=loss)
         result.log_dict({"train_loss": loss})
         # result.log_dict({"examples": [wandb.Image(Image.open("/mnt/vol_b/cars/car_ims/014839.jpg"), caption="Label")]})
@@ -83,9 +111,15 @@ class DML(pl.LightningModule):
     def validation_step(self, batch, batch_idx) -> EvalResult:
         
         images, target, index = batch
+        # breakpoint()
+        X = self(images)
 
-        output = self(images)
-        val_loss = self.criterion(output,target)
+        P = F.normalize(self.proxies, p = 2, dim = -1) * self.hparams.scaling_p
+        X = F.normalize(X, p = 2, dim = -1) * self.hparams.scaling_x
+        D = torch.cdist(X, P) ** 2
+        T = binarize_and_smooth_labels(target, len(P), self.smoothing_const)
+        # note that compared to proxy nca, positive included in denominator
+        val_loss = torch.sum(-T * F.log_softmax(-D, -1), -1)
         result = EvalResult(checkpoint_on=val_loss)
         result.log_dict({"val_loss":val_loss})
         # breakpoint()
@@ -229,28 +263,23 @@ class DML(pl.LightningModule):
     #         return res
 
     def configure_optimizers(self):
-
-        parameters = list(
-            set(self.model.parameters()).difference(
-                set(self.model.embedding_layer.parameters())
-            )
-        )
+        
         optimizer = optim.Adam(
             [
                 {
-                    "params": parameters,
+                    "params": self.backbone.parameters(),
                     "lr": self.hparams.lr_backbone,
                     "eps": 1.0,
                     "weight_decay": self.hparams.weight_decay_backbone,
                 },
+                # {
+                #     "params": self.backbone.fc.parameters(),
+                #     "lr": self.hparams.lr_embedding,
+                #     "eps": 1.0,
+                #     "weight_decay": self.hparams.weight_decay_embedding,
+                # },
                 {
-                    "params": self.model.embedding_layer.parameters(),
-                    "lr": self.hparams.lr_embedding,
-                    "eps": 1.0,
-                    "weight_decay": self.hparams.weight_decay_embedding,
-                },
-                {
-                    "params": self.criterion.parameters(),
+                    "params": self.proxies,
                     "lr": self.hparams.lr,
                     "eps": 1.0,
                     "weight_decay": self.hparams.weight_decay_proxynca,
