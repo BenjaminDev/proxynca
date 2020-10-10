@@ -11,7 +11,7 @@ dm = CarsDataModule(
     root="/mnt/vol_b/cars",
     classes=range(0, 98),
     test_classes=range(98, 196),
-    batch_size=64,
+    batch_size=32,
     transform=make_transform_inception_v3(),
 )
 # dm.prepare_data()
@@ -46,9 +46,10 @@ trainer = Trainer(max_epochs=100, gpus=1,
                     #  fast_dev_run=True,
                     #  val_check_interval=1.0,
                     #  limit_val_batches=0.0,
-                    #  auto_lr_find=False,
+                    gradient_clip_val=2.0,
+                    auto_lr_find=True,
                     #  overfit_batches=1,
-                    weights_summary='full',
+                    # weights_summary='full',
                     track_grad_norm=2,
                     callbacks=[lr_logger]
                      )

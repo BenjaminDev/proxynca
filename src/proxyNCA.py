@@ -97,7 +97,7 @@ class DML(pl.LightningModule):
         self.global_pool = torch.nn.AvgPool2d (8, stride=1, padding=0, ceil_mode=True, count_include_pad=True)
         self.embedding_layer = torch.nn.Linear(in_features=self.in_features, out_features=sz_embedding)
         self.proxies = Parameter(torch.randn(nb_classes, sz_embedding) / 8, requires_grad=True)
-
+        self.proxies.register_hook(lambda grad: self.logger.experiment.log({"proxy_grad":grad.cpu()})) 
     def _transform_input(self, x):
         if self.transform_input:
             x_ch0 = torch.unsqueeze(x[:, 0], 1) * (0.229 / 0.5) + (0.485 - 0.5) / 0.5
