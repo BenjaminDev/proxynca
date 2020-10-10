@@ -151,7 +151,7 @@ class DML(pl.LightningModule):
         x = self.embedding_layer(x)
         return x
 
-    def compute_loss(self, images, target, include_Xs_and_Ts=False):
+    def compute_loss(self, images, target, index=None,include_Xs_and_Ts=False):
         X = self(images)
         # breakpoint()
         P = F.normalize(self.proxies, p = 2, dim = -1) * self.hparams.scaling_p
@@ -161,8 +161,9 @@ class DML(pl.LightningModule):
         # note that compared to proxy nca, positive included in denominator
         loss = torch.sum(-T * F.log_softmax(-D, -1), -1)
         # breakpoint()
-        if include_Xs_and_Ts:
-            return loss.mean(), X, target
+        if include_Xs_and_Ts and index is not None:
+            breakpoint()
+            return loss.mean(), X, target, index[D.topk(4, largest=False).indices]
         return loss.mean()
     def training_step(self, batch, batch_idx):
         
@@ -179,7 +180,7 @@ class DML(pl.LightningModule):
     def validation_step(self, batch, batch_idx) -> EvalResult:
         images, target, index = batch
         # breakpoint()
-        val_loss, Xs, Ts = self.compute_loss(images, target, include_Xs_and_Ts=True)
+        val_loss, Xs, Ts = self.compute_loss(images, target, index=index, include_Xs_and_Ts=True)
         # breakpoint()
         # result = EvalResult(checkpoint_on=val_loss)
         self.log_dict({"val_loss":val_loss}, prog_bar=True, on_step=True, on_epoch=False)
@@ -187,7 +188,7 @@ class DML(pl.LightningModule):
         # X, T, *_ = self.predict_batchwise(batch)
         # result.hiddens = [X, T]
 
-        return {"Xs":Xs, "Ts":Ts}
+        return {"Xs":Xs, "Ts":Ts, "index":index}
     def validation_epoch_end(self, outputs):
         recall = []
         logs = {}
@@ -202,7 +203,11 @@ class DML(pl.LightningModule):
             recall.append(r_at_k)
             logs[f"val_R@{k}"] = r_at_k  # f"{r_at_k:.3f}"
         self.log_dict(logs)
+        images_and_labels = [self.dm.val_dataset[o["index"][0]] for o in outputs]
+        image_dict={"Query": [wandb.Image(some_img, caption="query")]}
+        # for img_pth in image_paths:
 
+        self.logger.experiment.log({"proxy_grad":grad.cpu()}) 
     #     result = EvalResult()
     #     result.log_dict({"avg_val_loss": outputs["val_loss"].mean()})
     #     result.log_dict(logs)
