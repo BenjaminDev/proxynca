@@ -2,8 +2,8 @@ from re import escape
 from pytorch_lightning import Trainer
 import pytorch_lightning
 from pytorch_lightning.loggers import WandbLogger
-from pytorch_lightning.trainer import lr_finder
-from data import CarsDataModule
+# from pytorch_lightning.tuner import lr_finder 
+from data import CarsDataModule, make_transform_inception_v3
 from model import get_inception_v3_model, get_inception_v2_model
 # from task import DML, ProxyNCA
 from proxyNCA import DML
@@ -12,6 +12,7 @@ dm = CarsDataModule(
     classes=range(0, 98),
     test_classes=range(98, 196),
     batch_size=64,
+    transform=make_transform_inception_v3(),
 )
 # dm.prepare_data()
 dm.setup()
@@ -31,23 +32,28 @@ else:
         lr=0.001,
         weight_decay_proxynca=0.0,
         dataloader=dm.train_dataloader(),
-        scaling_x=3,
-        scaling_p=3,
+        scaling_x=3.0,
+        scaling_p=3.0,
+        smoothing_const=0.1
     )
 from pytorch_lightning.callbacks import LearningRateLogger
 wandb_logger = WandbLogger(name='Adam-v1', project='ProxyNCA', save_dir="/mnt/vol_b/models/few-shot")
 lr_logger = LearningRateLogger(logging_interval='step')
 trainer = Trainer(max_epochs=100, gpus=1,
                      logger=wandb_logger,
-                     fast_dev_run=False,
+                    #  logger=True,
+                    
+                    #  fast_dev_run=True,
                     #  val_check_interval=1.0,
                     #  limit_val_batches=0.0,
-                     auto_lr_find=False,
-                    #  overfit_batches=1
+                    #  auto_lr_find=False,
+                    #  overfit_batches=1,
+                    weights_summary='full',
+                    track_grad_norm=2,
                     callbacks=[lr_logger]
                      )
 import wandb
-wandb.init(project="ProxyNCA")
-wandb.watch(model, log='all')
+# wandb.init(project="ProxyNCA", name="Adam-v1")
+# wandb.watch(model, log='all')
 trainer.fit(model, datamodule=dm)
 trainer.test(model, datamodule=dm)

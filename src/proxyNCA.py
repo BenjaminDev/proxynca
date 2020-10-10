@@ -68,86 +68,145 @@ class DML(pl.LightningModule):
         
         # Backbone:
         if backbone == "inception_v3":
-            self.backbone = models.inception_v3(pretrained=self.hparams.pretrained or True)
-            breakpoint()
-            # self.backbone.fc = torch.nn.Identity
-            # self.backbone = torch.nn.Sequential(*list(self.backbone.children())[:-1]) # remove fc layer
-            self.in_features = 2048 
+            inception = models.inception_v3(pretrained=self.hparams.pretrained or True)
+            self.transform_input = True
+            self.Conv2d_1a_3x3 = inception.Conv2d_1a_3x3
+            self.Conv2d_2a_3x3 = inception.Conv2d_2a_3x3
+            
+            self.Conv2d_2b_3x3 = inception.Conv2d_2b_3x3
+            self.maxpool1 = torch.nn.MaxPool2d(kernel_size=3, stride=2)
+
+            self.Conv2d_3b_1x1 = inception.Conv2d_3b_1x1
+            self.Conv2d_4a_3x3 = inception.Conv2d_4a_3x3
+            self.maxpool2 = torch.nn.MaxPool2d(kernel_size=3, stride=2)
+            self.Mixed_5b = inception.Mixed_5b
+            self.Mixed_5c = inception.Mixed_5c
+            self.Mixed_5d = inception.Mixed_5d
+            self.Mixed_6a = inception.Mixed_6a    
+            self.Mixed_6b = inception.Mixed_6b
+            self.Mixed_6c = inception.Mixed_6c
+            self.Mixed_6d = inception.Mixed_6d
+            self.Mixed_6e = inception.Mixed_6e
+            # Auxilary head removed
+            self.Mixed_7a = inception.Mixed_7a
+            self.Mixed_7b = inception.Mixed_7b
+            self.Mixed_7c = inception.Mixed_7c
+            self.in_features=2048
         else: raise NotImplementedError(f"backbone {backbone} is not supported!")
 
-        # self.global_pool = torch.nn.AvgPool2d (7, stride=1, padding=0, ceil_mode=True, count_include_pad=True)
+        self.global_pool = torch.nn.AvgPool2d (8, stride=1, padding=0, ceil_mode=True, count_include_pad=True)
         self.embedding_layer = torch.nn.Linear(in_features=self.in_features, out_features=sz_embedding)
-        self.proxies = Parameter(torch.randn(nb_classes, sz_embedding) / 8)
+        self.proxies = Parameter(torch.randn(nb_classes, sz_embedding) / 8, requires_grad=True)
 
-    def forward(self, x):
-        # breakpoint()
-        x = self.backbone(x)
-        # x = self.global_pool(x)
-        # x = x.view(x.size(0), -1)
-        # x = self.embedding_layer(x)
-        # if normalize_output == True:
-        #     x = torch.nn.functional.normalize(x, p=2, dim=1)
+    def _transform_input(self, x):
+        if self.transform_input:
+            x_ch0 = torch.unsqueeze(x[:, 0], 1) * (0.229 / 0.5) + (0.485 - 0.5) / 0.5
+            x_ch1 = torch.unsqueeze(x[:, 1], 1) * (0.224 / 0.5) + (0.456 - 0.5) / 0.5
+            x_ch2 = torch.unsqueeze(x[:, 2], 1) * (0.225 / 0.5) + (0.406 - 0.5) / 0.5
+            x = torch.cat((x_ch0, x_ch1, x_ch2), 1)
         return x
 
+    def forward(self, x):
+        x = self._transform_input(x)
+        # N x 3 x 299 x 299
+        x = self.Conv2d_1a_3x3(x)
+        # N x 32 x 149 x 149
+        x = self.Conv2d_2a_3x3(x)
+        # N x 32 x 147 x 147
+        x = self.Conv2d_2b_3x3(x)
+        # N x 64 x 147 x 147
+        x = self.maxpool1(x)
+        # N x 64 x 73 x 73
+        x = self.Conv2d_3b_1x1(x)
+        # N x 80 x 73 x 73
+        x = self.Conv2d_4a_3x3(x)
+        # N x 192 x 71 x 71
+        x = self.maxpool2(x)
+        # N x 192 x 35 x 35
+        x = self.Mixed_5b(x)
+        # N x 256 x 35 x 35
+        x = self.Mixed_5c(x)
+        # N x 288 x 35 x 35
+        x = self.Mixed_5d(x)
+        # N x 288 x 35 x 35
+        x = self.Mixed_6a(x)
+        # N x 768 x 17 x 17
+        x = self.Mixed_6b(x)
+        # N x 768 x 17 x 17
+        x = self.Mixed_6c(x)
+        # N x 768 x 17 x 17
+        x = self.Mixed_6d(x)
+        # N x 768 x 17 x 17
+        x = self.Mixed_6e(x)
+        # N x 768 x 17 x 17
+        x = self.Mixed_7a(x)
+        # N x 1280 x 8 x 8
+        x = self.Mixed_7b(x)
+        # N x 2048 x 8 x 8
+        x = self.Mixed_7c(x)
+        # N x 2048 x 8 x 8
 
+        x = self.global_pool(x)
+        x = x.view(x.size(0), -1)
+        x = self.embedding_layer(x)
+        return x
+
+    def compute_loss(self, images, target, include_Xs_and_Ts=False):
+        X = self(images)
+        # breakpoint()
+        P = F.normalize(self.proxies, p = 2, dim = -1) * self.hparams.scaling_p
+        X = F.normalize(X, p = 2, dim = -1) * self.hparams.scaling_x
+        D = torch.cdist(X, P) ** 2
+        T = binarize_and_smooth_labels(target, len(P), self.hparams.smoothing_const).to(X.device)
+        # note that compared to proxy nca, positive included in denominator
+        loss = torch.sum(-T * F.log_softmax(-D, -1), -1)
+        # breakpoint()
+        if include_Xs_and_Ts:
+            return loss.mean(), X, target
+        return loss.mean()
     def training_step(self, batch, batch_idx):
         
         images, target, index = batch
         # breakpoint()
-        X = self(images)
-
-        P = F.normalize(self.proxies, p = 2, dim = -1) * self.hparams.scaling_p
-        X = F.normalize(X, p = 2, dim = -1) * self.hparams.scaling_x
-        D = torch.cdist(X, P) ** 2
-        T = binarize_and_smooth_labels(target, len(P), self.smoothing_const)
-        # note that compared to proxy nca, positive included in denominator
-        loss = torch.sum(-T * F.log_softmax(-D, -1), -1)
-
-        result = TrainResult(minimize=loss)
-        result.log_dict({"train_loss": loss})
+        loss = self.compute_loss(images, target)
+        # result = TrainResult(minimize=loss)
+        self.log_dict({"train_loss": loss},prog_bar=True, on_step=True, on_epoch=False)
         # result.log_dict({"examples": [wandb.Image(Image.open("/mnt/vol_b/cars/car_ims/014839.jpg"), caption="Label")]})
-        return result
+        return loss
         # return {"loss": loss, "train_loss":loss.item() }
+
+
     def validation_step(self, batch, batch_idx) -> EvalResult:
-        
         images, target, index = batch
         # breakpoint()
-        X = self(images)
-
-        P = F.normalize(self.proxies, p = 2, dim = -1) * self.hparams.scaling_p
-        X = F.normalize(X, p = 2, dim = -1) * self.hparams.scaling_x
-        D = torch.cdist(X, P) ** 2
-        T = binarize_and_smooth_labels(target, len(P), self.smoothing_const)
-        # note that compared to proxy nca, positive included in denominator
-        val_loss = torch.sum(-T * F.log_softmax(-D, -1), -1)
-        result = EvalResult(checkpoint_on=val_loss)
-        result.log_dict({"val_loss":val_loss})
+        val_loss, Xs, Ts = self.compute_loss(images, target, include_Xs_and_Ts=True)
         # breakpoint()
-        # X, T, index= self.predict_batchwise(batch)
-        # breakpoint()
-        # im = Image.open(self.d[index])
-        X, T, *_ = self.predict_batchwise(batch)
-        result.hiddens = [X, T]
+        # result = EvalResult(checkpoint_on=val_loss)
+        self.log_dict({"val_loss":val_loss}, prog_bar=True, on_step=True, on_epoch=False)
 
-        return result
+        # X, T, *_ = self.predict_batchwise(batch)
+        # result.hiddens = [X, T]
+
+        return {"Xs":Xs, "Ts":Ts}
     def validation_epoch_end(self, outputs):
         recall = []
         logs = {}
-
-        val_Xs = torch.cat([h[0] for h in outputs["hiddens"]])
-        val_Ts = torch.cat([h[1] for h in outputs["hiddens"]])
+        # breakpoint()
+        val_Xs = torch.cat([h["Xs"] for h in outputs])
+        val_Ts = torch.cat([h["Ts"] for h in outputs])
         Y = assign_by_euclidian_at_k(val_Xs.cpu(), val_Ts.cpu(), 8) # min(8, len(batch)))
         Y = torch.from_numpy(Y)
-        breakpoint()
+        # breakpoint()
         for k in [1, 2, 4, 8]:
             r_at_k = 100*calc_recall_at_k(val_Ts.cpu(), Y, k)
             recall.append(r_at_k)
             logs[f"val_R@{k}"] = r_at_k  # f"{r_at_k:.3f}"
+        self.log_dict(logs)
 
-        result = EvalResult()
-        result.log_dict({"avg_val_loss": outputs["val_loss"].mean()})
-        result.log_dict(logs)
-        return result
+    #     result = EvalResult()
+    #     result.log_dict({"avg_val_loss": outputs["val_loss"].mean()})
+    #     result.log_dict(logs)
+    #     return result
 
     #     return torch.mean(outputs["val_loss"])
 
@@ -267,7 +326,7 @@ class DML(pl.LightningModule):
         optimizer = optim.Adam(
             [
                 {
-                    "params": self.backbone.parameters(),
+                    "params": self.parameters(),
                     "lr": self.hparams.lr_backbone,
                     "eps": 1.0,
                     "weight_decay": self.hparams.weight_decay_backbone,
@@ -278,12 +337,12 @@ class DML(pl.LightningModule):
                 #     "eps": 1.0,
                 #     "weight_decay": self.hparams.weight_decay_embedding,
                 # },
-                {
-                    "params": self.proxies,
-                    "lr": self.hparams.lr,
-                    "eps": 1.0,
-                    "weight_decay": self.hparams.weight_decay_proxynca,
-                },
+                # {
+                #     "params": self.proxies,
+                #     "lr": self.hparams.lr,
+                #     "eps": 1.0,
+                #     "weight_decay": self.hparams.weight_decay_proxynca,
+                # },
             ],
         )
 
