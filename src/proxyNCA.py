@@ -54,6 +54,10 @@ class ProxyNCA(torch.nn.Module):
         return loss.mean()
 from torchvision import models
 from torch.nn import Identity
+def denorm(img,mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)):
+        std_vec = torch.Tensor(std).unsqueeze(1).unsqueeze(1).to(img.device)
+        mean_vec = torch.Tensor(mean).unsqueeze(1).unsqueeze(1).to(img.device)
+        return img*std_vec+mean_vec
 
 def get_inception_v3_model(pretrained=True):
 
@@ -62,10 +66,10 @@ def get_inception_v3_model(pretrained=True):
     return inception_v3
 
 class DML(pl.LightningModule):
-    def __init__(self, *,nb_classes:int, sz_embedding:int=64, backbone:str="inception_v3", **kwargs) -> None:
+    def __init__(self, *,val_im_paths, nb_classes:int, sz_embedding:int=64, backbone:str="inception_v3", **kwargs) -> None:
         super().__init__()
         self.save_hyperparameters()
-        
+        self.val_im_paths=val_im_paths
         # Backbone:
         if backbone == "inception_v3":
             inception = models.inception_v3(pretrained=self.hparams.pretrained or True)
@@ -162,8 +166,8 @@ class DML(pl.LightningModule):
         loss = torch.sum(-T * F.log_softmax(-D, -1), -1)
         # breakpoint()
         if include_Xs_and_Ts and index is not None:
-            breakpoint()
-            return loss.mean(), X, target, index[D.topk(4, largest=False).indices]
+            # breakpoint()
+            return loss.mean(), X, target # index.cpu()[D.topk(4, largest=False).indices.cpu()]
         return loss.mean()
     def training_step(self, batch, batch_idx):
         
@@ -187,27 +191,40 @@ class DML(pl.LightningModule):
 
         # X, T, *_ = self.predict_batchwise(batch)
         # result.hiddens = [X, T]
-
         return {"Xs":Xs, "Ts":Ts, "index":index}
+
     def validation_epoch_end(self, outputs):
         recall = []
         logs = {}
         # breakpoint()
         val_Xs = torch.cat([h["Xs"] for h in outputs])
         val_Ts = torch.cat([h["Ts"] for h in outputs])
+        val_indexes = torch.cat([h["index"] for h in outputs])
         Y = assign_by_euclidian_at_k(val_Xs.cpu(), val_Ts.cpu(), 8) # min(8, len(batch)))
         Y = torch.from_numpy(Y)
         # breakpoint()
         for k in [1, 2, 4, 8]:
             r_at_k = 100*calc_recall_at_k(val_Ts.cpu(), Y, k)
             recall.append(r_at_k)
-            logs[f"val_R@{k}"] = r_at_k  # f"{r_at_k:.3f}"
+            logs[f"val_R@{k}"] = r_at_k
         self.log_dict(logs)
-        images_and_labels = [self.dm.val_dataset[o["index"][0]] for o in outputs]
-        image_dict={"Query": [wandb.Image(some_img, caption="query")]}
+        # breakpoint()
+        # image_label_index = [self.dm.val_dataset[o["index"][0]] for o in outputs][0]
+
+        # Log top 4
+        # breakpoint()
+        image_dict={}
+        top_k_indices = torch.cdist(val_Xs,val_Xs).topk(4, largest=False).indices
+        for i, example_result in enumerate(top_k_indices[:5]):
+             
+            image_dict[f"global step {self.global_step} example: {i}"] = [wandb.Image(Image.open(self.val_im_paths[val_indexes[example_result[0]]]), caption=f"query: {val_indexes[example_result[0]]}") ]
+            image_dict[f"global step {self.global_step} example: {i}"].extend([wandb.Image(Image.open(self.val_im_paths[val_indexes[idx]]), caption=f"retrial: rank({rank}) image_id {val_indexes[idx]}") for rank, idx in enumerate(example_result[1:])])
+
+            # image_dict[f"example: {i}"] = [wandb.Image(self.dm.val_dataset[val_indexes[idx]][0], caption="query: {}") for idx in example_result]
+        # image_dict={"Query": [wandb.Image(self.dm.denorm(image_label_index[0]).clamp(0,1), caption="query: {}")]}
         # for img_pth in image_paths:
 
-        self.logger.experiment.log({"proxy_grad":grad.cpu()}) 
+        self.logger.experiment.log(image_dict) 
     #     result = EvalResult()
     #     result.log_dict({"avg_val_loss": outputs["val_loss"].mean()})
     #     result.log_dict(logs)

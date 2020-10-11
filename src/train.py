@@ -23,6 +23,7 @@ else:
     model = DML(
         # model=get_inception_v2_model(sz_embedding=64),
         # criterion=ProxyNCA(nb_classes=dm.num_classes, sz_embedding=64),
+        val_im_paths=dm.val_dataset.im_paths,
         nb_classes=dm.num_classes,
         pretrained=True,
         lr_backbone=0.45,
