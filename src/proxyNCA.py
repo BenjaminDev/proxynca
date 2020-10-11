@@ -11,7 +11,7 @@ from torch import optim
 from torch.optim import lr_scheduler
 from PIL import Image
 import wandb
-
+from random import randint
 from evaluation import assign_by_euclidian_at_k, calc_recall_at_k
 
 
@@ -214,8 +214,9 @@ class DML(pl.LightningModule):
         # Log top 4
         # breakpoint()
         image_dict={}
-        top_k_indices = torch.cdist(val_Xs,val_Xs).topk(4, largest=False).indices
-        for i, example_result in enumerate(top_k_indices[:5]):
+        top_k_indices = torch.cdist(val_Xs,val_Xs).topk(5, largest=False).indices
+        max_idx = len(top_k_indices) -1
+        for i, example_result in enumerate(top_k_indices[[randint(0,max_idx) for _ in range(0,5)]]):
              
             image_dict[f"global step {self.global_step} example: {i}"] = [wandb.Image(Image.open(self.val_im_paths[val_indexes[example_result[0]]]), caption=f"query: {val_indexes[example_result[0]]}") ]
             image_dict[f"global step {self.global_step} example: {i}"].extend([wandb.Image(Image.open(self.val_im_paths[val_indexes[idx]]), caption=f"retrial: rank({rank}) image_id {val_indexes[idx]}") for rank, idx in enumerate(example_result[1:])])
