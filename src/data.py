@@ -181,6 +181,7 @@ def make_transform_old(
     )
 
 
+
 class CarsDataModule(pl.LightningDataModule):
     def __init__(
         self, root, classes, test_classes, transform=None, batch_size: int = 32
@@ -300,6 +301,42 @@ class UPMCFood101DataModule(pl.LightningDataModule):
     def test_dataloader(self):
         return DataLoader(self, batch_size=32)
 
+from pathlib import Path
+class FoodDataset(torch.utils.data.Dataset):
+    def __init__(self, root, classes, transform=None):
+        super().__init__()
+        self.classes = classes
+        self.root = root
+        self.transform = transform
+                
+        im_paths = sorted([p for p in Path(self.root).glob("train/**/*.jpg")]+[p for p in Path(self.root).glob("test/**/*.jpg")])
+        breakpoint()
+        self.im_paths=[p for p in im_paths if p.parent.stem in classes]
+        self.ys = [classes.index(p.parent.stem) for p in self.im_paths]
+        
+    def nb_classes(self):
+        return len(self.classes)
+
+    def __len__(self):
+        return len(self.ys)
+
+    def __getitem__(self, index):
+        im = PIL.Image.open(self.im_paths[index])
+        # convert gray to rgb
+        if len(list(im.split())) == 1:
+            im = im.convert("RGB")
+        if self.transform is not None:
+            im = self.transform(im)
+        return im, self.ys[index], index
+
+    def get_label(self, index):
+        return self.classes[self.ys[index]]
+
+    @staticmethod
+    def load_classes(filename):
+        with open(filename, mode="r") as fp:
+            return [l.strip() for l in fp.readlines()]    
+
 
 # import hydra
 # from omegaconf import DictConfig, OmegaConf
@@ -307,9 +344,13 @@ class UPMCFood101DataModule(pl.LightningDataModule):
 # @hydra.main(config_name="config.yml")
 def main():
 
-    dm = CarsDataModule(
-        root="/mnt/c/Users/benja/workspace/data/cars", classes=range(0, 98)
-    )
+    # dm = CarsDataModule(
+    #     root="/mnt/c/Users/benja/workspace/data/cars", classes=range(0, 98)
+    # )
+    classes_filename = "/home/ubuntu/few-shot-metric-learning/src/foods101.txt"
+    classes = FoodDataset.load_classes(filename=classes_filename)
+    
+    ds=FoodDataset("/mnt/vol_b/images",classes )
     breakpoint()
 
 
