@@ -3,14 +3,24 @@ from pytorch_lightning import Trainer
 import pytorch_lightning
 from pytorch_lightning.loggers import WandbLogger
 # from pytorch_lightning.tuner import lr_finder 
-from data import CarsDataModule, make_transform_inception_v3
+from data import CarsDataModule, make_transform_inception_v3, FoodDataset
 from model import get_inception_v3_model, get_inception_v2_model
 # from task import DML, ProxyNCA
 from proxyNCA import DML
+
+classes_filename = "/home/ubuntu/few-shot-metric-learning/src/foods101.txt"
+food_classes = FoodDataset.load_classes(classes_filename)
+
 dm = CarsDataModule(
-    root="/mnt/vol_b/cars",
-    classes=range(0, 98),
-    test_classes=range(98, 196),
+    DataSetType=FoodDataset,
+    root="/mnt/vol_b/images",
+    classes=food_classes[:50],
+    test_classes=food_classes[50:100],
+
+    # root="/mnt/vol_b/cars",
+    # classes=range(0, 98),
+    # test_classes=range(98, 196),
+
     batch_size=32,
     transform=make_transform_inception_v3(),
 )
@@ -24,6 +34,7 @@ else:
         # model=get_inception_v2_model(sz_embedding=64),
         # criterion=ProxyNCA(nb_classes=dm.num_classes, sz_embedding=64),
         val_im_paths=dm.val_dataset.im_paths,
+        val_dataset=dm.val_dataset,
         nb_classes=dm.num_classes,
         pretrained=True,
         lr_backbone=0.45,
@@ -38,7 +49,7 @@ else:
         smoothing_const=0.1
     )
 from pytorch_lightning.callbacks import LearningRateLogger
-wandb_logger = WandbLogger(name='Adam-v1', project='ProxyNCA', save_dir="/mnt/vol_b/models/few-shot")
+wandb_logger = WandbLogger(name='Food101', project='ProxyNCA', save_dir="/mnt/vol_b/models/few-shot")
 lr_logger = LearningRateLogger(logging_interval='step')
 trainer = Trainer(max_epochs=100, gpus=1,
                      logger=wandb_logger,

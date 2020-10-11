@@ -184,7 +184,7 @@ def make_transform_old(
 
 class CarsDataModule(pl.LightningDataModule):
     def __init__(
-        self, root, classes, test_classes, transform=None, batch_size: int = 32
+        self, DataSetType,root, classes, test_classes, transform=None, batch_size: int = 32
     ) -> None:
         super().__init__()
         self.transform = transform if transform else make_transform()
@@ -193,17 +193,18 @@ class CarsDataModule(pl.LightningDataModule):
         self.classes = classes
         self.batch_size = batch_size
         self.num_classes = len(classes)
+        self.DataSetType=DataSetType
 
     def setup(self):
-        self.train_dataset = CarsDataset(
+        self.train_dataset = self.DataSetType(
             root=self.root, classes=self.classes, transform=self.transform
         )
 
-        self.val_dataset = CarsDataset(
+        self.val_dataset = self.DataSetType(
             root=self.root, classes=self.test_classes, transform=self.transform
         )
 
-        self.test_dataset = CarsDataset(
+        self.test_dataset = self.DataSetType(
             root=self.root, classes=self.test_classes, transform=self.transform
         )
 
@@ -302,17 +303,39 @@ class UPMCFood101DataModule(pl.LightningDataModule):
         return DataLoader(self, batch_size=32)
 
 from pathlib import Path
+from fastcore.utils import parallel
+import shutil
+import os
+def verify_image(fn):
+    "Confirm that `fn` can be opened"
+    try:
+        im = PIL.Image.open(fn)
+        im.draft(im.mode, (32,32))
+        im.load()
+        return fn
+    except:
+        print(f"found broken {fn}")
+        shutil.copy(fn, f"/mnt/vol_b/broken_images/{fn.stem}.broken_jpg")
+        os.remove(fn)
+        return None
+from fastprogress import progress_bar    
 class FoodDataset(torch.utils.data.Dataset):
-    def __init__(self, root, classes, transform=None):
+    def __init__(self, root, classes, transform=None, verify_images=True):
         super().__init__()
         self.classes = classes
         self.root = root
         self.transform = transform
                 
-        im_paths = sorted([p for p in Path(self.root).glob("train/**/*.jpg")]+[p for p in Path(self.root).glob("test/**/*.jpg")])
-        breakpoint()
-        self.im_paths=[p for p in im_paths if p.parent.stem in classes]
+        valid_image_paths = sorted([p for p in Path(self.root).glob("train/**/*.jpg")]+[p for p in Path(self.root).glob("test/**/*.jpg")])
+        print("removing problem images")
+        # valid_image_paths = parallel(verify_image,im_paths, progress=progress_bar, threadpool=True)
+        # valid_image_paths = [p for p in valid_image_paths if p is not None]
+        print("Finished removing problem images")
+        
+        # im_paths = [p for p in im_paths if p in valid_image_paths]
+        self.im_paths=[p for p in valid_image_paths if p.parent.stem in classes]
         self.ys = [classes.index(p.parent.stem) for p in self.im_paths]
+        print(f"Done: {len(self.im_paths)}")
         
     def nb_classes(self):
         return len(self.classes)
