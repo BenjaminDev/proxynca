@@ -66,10 +66,11 @@ def get_inception_v3_model(pretrained=True):
     return inception_v3
 
 class DML(pl.LightningModule):
-    def __init__(self, *,val_im_paths, nb_classes:int, sz_embedding:int=64, backbone:str="inception_v3", **kwargs) -> None:
+    def __init__(self, *,val_dataset,val_im_paths, nb_classes:int, sz_embedding:int=64, backbone:str="inception_v3", **kwargs) -> None:
         super().__init__()
         self.save_hyperparameters()
         self.val_im_paths=val_im_paths
+        self.val_dataset=val_dataset
         # Backbone:
         if backbone == "inception_v3":
             inception = models.inception_v3(pretrained=self.hparams.pretrained or True)
@@ -191,7 +192,7 @@ class DML(pl.LightningModule):
 
         # X, T, *_ = self.predict_batchwise(batch)
         # result.hiddens = [X, T]
-        return {"Xs":Xs, "Ts":Ts, "index":index}
+        return {"Xs":Xs, "Ts":Ts, "index":index, "val_loss":val_loss.item()}
 
     def validation_epoch_end(self, outputs):
         recall = []
@@ -218,9 +219,10 @@ class DML(pl.LightningModule):
         max_idx = len(top_k_indices) -1
         for i, example_result in enumerate(top_k_indices[[randint(0,max_idx) for _ in range(0,5)]]):
              
-            image_dict[f"global step {self.global_step} example: {i}"] = [wandb.Image(Image.open(self.val_im_paths[val_indexes[example_result[0]]]), caption=f"query: {val_indexes[example_result[0]]}") ]
-            image_dict[f"global step {self.global_step} example: {i}"].extend([wandb.Image(Image.open(self.val_im_paths[val_indexes[idx]]), caption=f"retrial: rank({rank}) image_id {val_indexes[idx]}") for rank, idx in enumerate(example_result[1:])])
-
+            image_dict[f"global step {self.global_step} example: {i}"] = [wandb.Image(Image.open(self.val_im_paths[val_indexes[example_result[0]]]), caption=f"query: {self.val_dataset.get_label(val_indexes[example_result[0]])}") ]
+            image_dict[f"global step {self.global_step} example: {i}"].extend([wandb.Image(Image.open(self.val_im_paths[val_indexes[idx]]), caption=f"retrival:({rank}) {self.val_dataset.get_label(val_indexes[idx])}") for rank, idx in enumerate(example_result[1:])])
+        
+        wandb.log({f"val_loss_{self.current_epoch}": wandb.Histogram([[h["val_loss"] for h in outputs]])})    
             # image_dict[f"example: {i}"] = [wandb.Image(self.dm.val_dataset[val_indexes[idx]][0], caption="query: {}") for idx in example_result]
         # image_dict={"Query": [wandb.Image(self.dm.denorm(image_label_index[0]).clamp(0,1), caption="query: {}")]}
         # for img_pth in image_paths:
