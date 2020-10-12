@@ -145,13 +145,38 @@ def make_transform(mean=cars_mean, std=cars_std):
         transforms.ToTensor(),
         normalize])
 
-def make_transform_inception_v3():
-    return transforms.Compose([
-    transforms.Resize(299),
-    transforms.CenterCrop(299),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-])    
+import kornia
+def reduce_batch_of_one(image):
+    
+    return image.squeeze(0)
+def make_transform_inception_v3(augment=False):
+    
+    base_transforms=[   
+        transforms.Resize(299),
+        transforms.CenterCrop(299),
+        transforms.ToTensor(),
+        ]
+
+    augmentation_transforms = torch.nn.Sequential(
+        # kornia.enhance.AdjustBrightness(0.5),
+        # kornia.enhance.AdjustGamma(gamma=2.),
+        # kornia.enhance.AdjustContrast(0.7),
+        kornia.augmentation.RandomHorizontalFlip(),
+        kornia.augmentation.RandomGrayscale(),
+        kornia.augmentation.RandomRotation(degrees=180),
+        # kornia.augmentation.RandomSolarize()
+        # kornia.augmentation.Normalize(mean=torch.tensor([0.485, 0.456, 0.406]), std=torch.tensor([0.229, 0.224, 0.225]))
+
+
+    )
+    # transforms.
+    if augment:
+        return transforms.Compose(base_transforms+ [augmentation_transforms]+[reduce_batch_of_one] + [transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
+    else:
+        return transforms.Compose(base_transforms + [transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
+    
+    #  [transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+# ])    
 
 def make_transform_old(
     sz_resize=256,
@@ -184,10 +209,11 @@ def make_transform_old(
 
 class CarsDataModule(pl.LightningDataModule):
     def __init__(
-        self, DataSetType,root, classes, test_classes, transform=None, batch_size: int = 32
+        self, DataSetType,root, classes, test_classes, train_transform,eval_transform, batch_size: int = 32
     ) -> None:
         super().__init__()
-        self.transform = transform if transform else make_transform()
+        self.train_transform = train_transform
+        self.eval_transform= eval_transform
         self.root = root
         self.test_classes = test_classes
         self.classes = classes
@@ -197,15 +223,15 @@ class CarsDataModule(pl.LightningDataModule):
 
     def setup(self):
         self.train_dataset = self.DataSetType(
-            root=self.root, classes=self.classes, transform=self.transform
+            root=self.root, classes=self.classes, transform=self.train_transform
         )
 
         self.val_dataset = self.DataSetType(
-            root=self.root, classes=self.test_classes, transform=self.transform
+            root=self.root, classes=self.test_classes, transform=self.eval_transform
         )
 
         self.test_dataset = self.DataSetType(
-            root=self.root, classes=self.test_classes, transform=self.transform
+            root=self.root, classes=self.test_classes, transform=self.eval_transform
         )
 
 
@@ -325,8 +351,12 @@ class FoodDataset(torch.utils.data.Dataset):
         self.classes = classes
         self.root = root
         self.transform = transform
-                
-        valid_image_paths = sorted([p for p in Path(self.root).glob("train/**/*.jpg")]+[p for p in Path(self.root).glob("test/**/*.jpg")])
+
+        valid_image_paths=[]
+        # for class_name in classes:
+        valid_image_paths.extend([p for p in Path(self.root).glob(f"**/**/*.jpg")])
+        valid_image_paths = sorted(valid_image_paths)
+        
         print("removing problem images")
         # valid_image_paths = parallel(verify_image,im_paths, progress=progress_bar, threadpool=True)
         # valid_image_paths = [p for p in valid_image_paths if p is not None]
@@ -370,7 +400,7 @@ def main():
     # dm = CarsDataModule(
     #     root="/mnt/c/Users/benja/workspace/data/cars", classes=range(0, 98)
     # )
-    classes_filename = "/home/ubuntu/few-shot-metric-learning/src/foods101.txt"
+    classes_filename = "/home/ubuntu/few-shot-metric-learning/src/UMPC-G20.txt"
     classes = FoodDataset.load_classes(filename=classes_filename)
     
     ds=FoodDataset("/mnt/vol_b/images",classes )

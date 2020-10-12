@@ -8,21 +8,22 @@ from model import get_inception_v3_model, get_inception_v2_model
 # from task import DML, ProxyNCA
 from proxyNCA import DML
 
-classes_filename = "/home/ubuntu/few-shot-metric-learning/src/foods101.txt"
+classes_filename = "/home/ubuntu/few-shot-metric-learning/src/UMPC-G20.txt"
 food_classes = FoodDataset.load_classes(classes_filename)
 
 dm = CarsDataModule(
     DataSetType=FoodDataset,
     root="/mnt/vol_b/images",
-    classes=food_classes[:50],
-    test_classes=food_classes[50:100],
+    classes=food_classes[::2],
+    test_classes=food_classes[1::2],
 
     # root="/mnt/vol_b/cars",
     # classes=range(0, 98),
     # test_classes=range(98, 196),
 
     batch_size=32,
-    transform=make_transform_inception_v3(),
+    train_transform=make_transform_inception_v3(augment=True),
+    eval_transform=make_transform_inception_v3(augment=False)
 )
 # dm.prepare_data()
 dm.setup()
@@ -49,7 +50,7 @@ else:
         smoothing_const=0.1
     )
 from pytorch_lightning.callbacks import LearningRateLogger
-wandb_logger = WandbLogger(name='Food101', project='ProxyNCA', save_dir="/mnt/vol_b/models/few-shot")
+wandb_logger = WandbLogger(name='UMP-G20', project='ProxyNCA', save_dir="/mnt/vol_b/models/few-shot")
 lr_logger = LearningRateLogger(logging_interval='step')
 trainer = Trainer(max_epochs=100, gpus=1,
                      logger=wandb_logger,

@@ -1,5 +1,7 @@
 from logging import log
 from numpy.core.shape_base import stack
+import numpy as np
+import plotly.graph_objects as go
 import pytorch_lightning as pl
 from pytorch_lightning import EvalResult, TrainResult
 import torch
@@ -11,8 +13,9 @@ from torch import optim
 from torch.optim import lr_scheduler
 from PIL import Image
 import wandb
+import matplotlib.pyplot as plt
 from random import randint
-from evaluation import assign_by_euclidian_at_k, calc_recall_at_k
+from evaluation import assign_by_euclidian_at_k, calc_recall_at_k, calc_normalized_mutual_information, cluster_by_kmeans
 
 
 def binarize_and_smooth_labels(T, nb_classes, smoothing_const=0.1):
@@ -54,6 +57,9 @@ class ProxyNCA(torch.nn.Module):
         return loss.mean()
 from torchvision import models
 from torch.nn import Identity
+
+from sklearn.decomposition import PCA
+
 def denorm(img,mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)):
         std_vec = torch.Tensor(std).unsqueeze(1).unsqueeze(1).to(img.device)
         mean_vec = torch.Tensor(mean).unsqueeze(1).unsqueeze(1).to(img.device)
@@ -66,7 +72,7 @@ def get_inception_v3_model(pretrained=True):
     return inception_v3
 
 class DML(pl.LightningModule):
-    def __init__(self, *,val_dataset,val_im_paths, nb_classes:int, sz_embedding:int=64, backbone:str="inception_v3", **kwargs) -> None:
+    def __init__(self, *,val_dataset,val_im_paths, nb_classes:int, sz_embedding:int=64, backbone:str="inception_v3", pooling:str="max",**kwargs) -> None:
         super().__init__()
         self.save_hyperparameters()
         self.val_im_paths=val_im_paths
@@ -98,8 +104,13 @@ class DML(pl.LightningModule):
             self.Mixed_7c = inception.Mixed_7c
             self.in_features=2048
         else: raise NotImplementedError(f"backbone {backbone} is not supported!")
-
-        self.global_pool = torch.nn.AvgPool2d (8, stride=1, padding=0, ceil_mode=True, count_include_pad=True)
+        if pooling=="avg":
+            self.global_pool = torch.nn.AvgPool2d (8, stride=1, padding=0, ceil_mode=True, count_include_pad=True)
+        elif pooling=="max":
+            self.global_pool = torch.nn.MaxPool2d (8, stride=1, padding=0)
+        else:
+            raise NotImplementedError(f"pooling {pooling} not supported!")
+            
         self.embedding_layer = torch.nn.Linear(in_features=self.in_features, out_features=sz_embedding)
         self.proxies = Parameter(torch.randn(nb_classes, sz_embedding) / 8, requires_grad=True)
         self.proxies.register_hook(lambda grad: self.logger.experiment.log({"proxy_grad":grad.cpu()})) 
@@ -188,7 +199,7 @@ class DML(pl.LightningModule):
         val_loss, Xs, Ts = self.compute_loss(images, target, index=index, include_Xs_and_Ts=True)
         # breakpoint()
         # result = EvalResult(checkpoint_on=val_loss)
-        self.log_dict({"val_loss":val_loss}, prog_bar=True, on_step=True, on_epoch=False)
+        self.log_dict({"val_loss":val_loss}, prog_bar=True, on_step=False, on_epoch=True)
 
         # X, T, *_ = self.predict_batchwise(batch)
         # result.hiddens = [X, T]
@@ -211,7 +222,49 @@ class DML(pl.LightningModule):
         self.log_dict(logs)
         # breakpoint()
         # image_label_index = [self.dm.val_dataset[o["index"][0]] for o in outputs][0]
+        nmi = 100*calc_normalized_mutual_information(
+            val_Ts.cpu(),
+            cluster_by_kmeans(
+                val_Xs.cpu(), self.hparams.nb_classes
+            )
+        )
+        self.log_dict({"NMI":nmi})
+        
+        
 
+        pca = PCA(2)  # project from 64 to 2 dimensions
+        projected = pca.fit_transform(val_Xs.cpu())
+        # log_scatter(x,y,labels)
+        fig = go.Figure(data=go.Scatter(x=projected[:, 0],
+                                y= projected[:, 1],
+                                mode='markers',
+                                marker_color=val_Ts.cpu(),
+                                text=[self.val_dataset.classes[o] for o in val_Ts.cpu()])) # hover text goes here
+
+        # fig.update_layout(title='Population of USA States')
+        wandb.log({"Embedding of Data": fig})
+        # fig.show()
+        # plt.scatter(projected[:, 0], projected[:, 1],
+        #     c=val_Ts.cpu(), edgecolor='none', alpha=0.5,
+        #     cmap=plt.cm.get_cmap('Spectral', 10))
+        # plt.xlabel('component 1')
+        # plt.ylabel('component 2')
+        # plt.colorbar()
+        # wandb.log({"Embedding of Data": plt})
+
+        proxies = pca.transform(self.proxies.detach().cpu())
+        plt.scatter(proxies[:, 0], proxies[:, 1],
+            c=[o for o in range(0, len(self.proxies))], edgecolor='none', alpha=0.5,
+            cmap=plt.cm.get_cmap('Spectral', 10))
+        for i, x in enumerate(proxies): plt.annotate(self.val_dataset.classes[i], (x[0], x[1]))    
+        plt.xlabel('component 1')
+        plt.ylabel('component 2')
+        plt.colorbar()
+        wandb.log({"Embedding of Proxies": plt})
+        
+
+
+        
         # Log top 4
         # breakpoint()
         image_dict={}
@@ -222,7 +275,8 @@ class DML(pl.LightningModule):
             image_dict[f"global step {self.global_step} example: {i}"] = [wandb.Image(Image.open(self.val_im_paths[val_indexes[example_result[0]]]), caption=f"query: {self.val_dataset.get_label(val_indexes[example_result[0]])}") ]
             image_dict[f"global step {self.global_step} example: {i}"].extend([wandb.Image(Image.open(self.val_im_paths[val_indexes[idx]]), caption=f"retrival:({rank}) {self.val_dataset.get_label(val_indexes[idx])}") for rank, idx in enumerate(example_result[1:])])
         
-        wandb.log({f"val_loss_{self.current_epoch}": wandb.Histogram([[h["val_loss"] for h in outputs]])})    
+        wandb.log({f"val_loss_hist": wandb.Histogram([[h["val_loss"] for h in outputs]])})    
+        
             # image_dict[f"example: {i}"] = [wandb.Image(self.dm.val_dataset[val_indexes[idx]][0], caption="query: {}") for idx in example_result]
         # image_dict={"Query": [wandb.Image(self.dm.denorm(image_label_index[0]).clamp(0,1), caption="query: {}")]}
         # for img_pth in image_paths:
