@@ -1,3 +1,5 @@
+# REF https://github.com/dichotomies/proxy-nca
+# All functions taken from https://github.com/dichotomies/proxy-nca
 import sklearn.cluster
 import sklearn.metrics.cluster
 import numpy as np
