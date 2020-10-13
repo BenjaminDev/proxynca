@@ -6,7 +6,6 @@ import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
 from PIL import Image
-from pytorch_lightning import EvalResult, TrainResult
 from torch import optim
 from sklearn.decomposition import PCA
 from torchvision import models
@@ -148,7 +147,6 @@ class DML(pl.LightningModule):
 
     def compute_loss(self, images, target, include_embeddings=False)->Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         X = self(images)
-        # breakpoint()
         P = F.normalize(self.proxies, p = 2, dim = -1) * self.hparams.scaling_p
         X = F.normalize(X, p = 2, dim = -1) * self.hparams.scaling_x
         D = torch.cdist(X, P) ** 2
@@ -165,9 +163,13 @@ class DML(pl.LightningModule):
         images, target, _ = batch
         
         loss, Xs = self.compute_loss(images, target,include_embeddings=True)
-        self.log_dict({"train_loss": loss},prog_bar=True, on_step=True, on_epoch=False)
+        self.log_dict({"train_loss": loss},prog_bar=True, on_step=True, on_epoch=True)
         return {"loss":loss, "Xs":Xs, "Ts":target }
 
+    def training_epoch_end(self, outputs):
+        """"""
+        # Since validation set samples are iid I prefer looking at a histogram of valitation losses.
+        wandb.log({f"val_loss_hist": wandb.Histogram([[h["loss"] for h in outputs]])})   
 
     def validation_step(self, batch, batch_idx) -> Dict[str, Any]:
         """Run a batch from the validation dataset through the model"""
@@ -230,7 +232,7 @@ class DML(pl.LightningModule):
                                 y= proxies[:, 1],
                                 mode='markers',
                                 marker_color=val_Ts.cpu(),
-                                text=[self.val_dataset.classes[o] for o in range(0,len(proxies))])) # hover text goes here
+                                text=[self.val_dataset.get_label_description(o) for o in range(0,len(proxies))])) # hover text goes here
         wandb.log({"Embedding of Proxies (on validation data)": fig})
 
        
@@ -240,8 +242,8 @@ class DML(pl.LightningModule):
         max_idx = len(top_k_indices) -1
         for i, example_result in enumerate(top_k_indices[[randint(0,max_idx) for _ in range(0,5)]]):
              
-            image_dict[f"global step {self.global_step} example: {i}"] = [wandb.Image(Image.open(self.val_dataset.im_paths[val_indexes[example_result[0]]]), caption=f"query: {self.val_dataset.get_label_description(val_indexes[example_result[0]])}") ]
-            image_dict[f"global step {self.global_step} example: {i}"].extend([wandb.Image(Image.open(self.val_dataset.im_paths[val_indexes[idx]]), caption=f"retrival:({rank}) {self.val_dataset.get_label_description(val_indexes[idx])}") for rank, idx in enumerate(example_result[1:])])
+            image_dict[f"global step {self.global_step} example: {i}"] = [wandb.Image(Image.open(self.val_dataset.im_paths[val_indexes[example_result[0]]]), caption=f"query: {self.val_dataset.get_label_description(self.val_dataset.get_label(val_indexes[example_result[0]]))}") ]
+            image_dict[f"global step {self.global_step} example: {i}"].extend([wandb.Image(Image.open(self.val_dataset.im_paths[val_indexes[idx]]), caption=f"retrival:({rank}) {self.val_dataset.get_label_description(self.val_dataset.get_label(val_indexes[idx]))}") for rank, idx in enumerate(example_result[1:])])
         self.logger.experiment.log(image_dict) 
         
         # Since validation set samples are iid I prefer looking at a histogram of valitation losses.

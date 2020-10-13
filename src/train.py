@@ -48,10 +48,10 @@ else:
         scaling_p=3.0,
         smoothing_const=0.1
     )
-from pytorch_lightning.callbacks import LearningRateLogger
+from pytorch_lightning.callbacks.lr_monitor import LearningRateMonitor
 wandb_logger = WandbLogger(name=dm.name, project='ProxyNCA', save_dir="/mnt/vol_b/models/few-shot")
-lr_logger = LearningRateLogger(logging_interval='step')
-trainer = Trainer(max_epochs=100, gpus=1,
+lr_logger = LearningRateMonitor(logging_interval='step')
+trainer = Trainer(max_epochs=10, gpus=1,
                      logger=wandb_logger,
                     #  logger=True,
                     
