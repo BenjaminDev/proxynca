@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import Callable, List, Union
+from typing import Callable, List, Optional, Union
 
 import kornia
 import matplotlib.pyplot as plt
@@ -19,135 +19,30 @@ from torchvision.utils import make_grid
 cars_mean = (0.485, 0.456, 0.406)
 cars_std = (0.229, 0.224, 0.225)
 
-class CarsDataset(torch.utils.data.Dataset):
-    """
-    Loads the cars196 dataset.
-    To download:
-    ```
-    wget http://imagenet.stanford.edu/internal/car196/cars_annos.mat
-    wget http://imagenet.stanford.edu/internal/car196/car_ims.tgz
-    tar -xzvf car_ims.tgz
-    ```
-    """
-
-    def __init__(
-        self, root: str, classes: List[int], transform: Optional[Callable] = None
-    ):
-        """Holds the cars196 dataset
-           REF: https://github.com/dichotomies/proxy-nca
-        Args:
-            root (Union[Path, str]): Paths to `cars` dirctory.
-            classes (List[int]): List of valid labels range(0,196)
-            transform (Optional[Callable], optional): transform to apply. Defaults to None.
-        """
-        super().__init__()
-        self.classes = classes
-        self.root = root
-        self.transform = transform
-        self.ys, self.im_paths, self.I = [], [], []
-
-        annos_fn = "cars_annos.mat"
-        cars = scipy.io.loadmat(os.path.join(root, annos_fn))
-        self.cars = cars
-        ys = [int(a[5][0] - 1) for a in cars["annotations"][0]]
-        im_paths = [a[0][0] for a in cars["annotations"][0]]
-        index = 0
-        for im_path, y in zip(im_paths, ys):
-            if y in classes:  # choose only specified classes
-                self.im_paths.append(os.path.join(root, im_path))
-                self.ys.append(y)
-                self.I += [index]
-                index += 1
-
-    def nb_classes(self):
-        assert set(self.ys) == set(self.classes)
-        return len(self.classes)
-
-    def __len__(self):
-        return len(self.ys)
-
-    def __getitem__(self, index):
-        im = PIL.Image.open(self.im_paths[index])
-        # convert gray to rgb
-        if len(list(im.split())) == 1:
-            im = im.convert("RGB")
-        if self.transform is not None:
-            im = self.transform(im)
-        return im, self.ys[index], index
-
-    def get_label(self, index):
-        return self.ys[index]
-
-
-
-
-def reduce_batch_of_one(image: torch.Tensor) -> torch.Tensor:
-    """reduces a tensor along the batch dimention
-
-    Args:
-        image (torch.Tensor): batch of one reduce
-
-    Returns:
-        torch.Tensor: image
-    """
-    return image.squeeze(0)
-
-
-def make_transform_inception_v3(augment=False)->torch.Tensor:
-    """Transformation pipeline for loading data into the inception_v3 backbone.
-
-    Args:
-        augment (bool, optional): if set data augmentation will be applied. Defaults to False.
-
-    Returns:
-        [torch.Tensor]: retuns image as tensor. 
-    """
-
-    base_transforms = [
-        T.Resize(299),
-        T.CenterCrop(299),
-        T.ToTensor(),
-    ]
-
-    if augment:
-        base_transforms =base_transforms + [torch.nn.Sequential(
-            kornia.augmentation.RandomHorizontalFlip(),
-            kornia.augmentation.RandomGrayscale(),
-            kornia.augmentation.RandomRotation(degrees=180),
-        ), reduce_batch_of_one]
-
-    return transforms.Compose(
-            base_transforms
-            + [
-                T.Normalize(
-                    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
-                )
-            ]
-        )
-
-
 class DMLDataModule(pl.LightningDataModule):
     """A generic Distance Metric Learning datamodule.
     """
     def __init__(
         self,
+        name:str,
         DataSetType,
-        root,
-        classes,
-        test_classes,
-        train_transform,
-        eval_transform,
+        root:Union[Path, str],
+        classes:List[Union[int, str]],
+        eval_classes:List[Union[int, str]],
+        train_transform:Callable,
+        eval_transform:Callable,
         batch_size: int = 32,
     ) -> None:
         super().__init__()
+        self.name = name
+        self.DataSetType = DataSetType
+        self.root = root
+        self.classes = classes
+        self.eval_classes = eval_classes
         self.train_transform = train_transform
         self.eval_transform = eval_transform
-        self.root = root
-        self.test_classes = test_classes
-        self.classes = classes
         self.batch_size = batch_size
         self.num_classes = len(classes)
-        self.DataSetType = DataSetType
 
     def setup(self):
         self.train_dataset = self.DataSetType(
@@ -155,11 +50,11 @@ class DMLDataModule(pl.LightningDataModule):
         )
 
         self.val_dataset = self.DataSetType(
-            root=self.root, classes=self.test_classes, transform=self.eval_transform
+            root=self.root, classes=self.eval_classes, transform=self.eval_transform
         )
 
         self.test_dataset = self.DataSetType(
-            root=self.root, classes=self.test_classes, transform=self.eval_transform
+            root=self.root, classes=self.eval_classes, transform=self.eval_transform
         )
 
     def train_dataloader(self):
@@ -207,6 +102,71 @@ class DMLDataModule(pl.LightningDataModule):
         ).unsqueeze(1).unsqueeze(1)
 
 
+class CarsDataset(torch.utils.data.Dataset):
+    """
+    Loads the cars196 dataset.
+    To download:
+    ```
+    wget http://imagenet.stanford.edu/internal/car196/cars_annos.mat
+    wget http://imagenet.stanford.edu/internal/car196/car_ims.tgz
+    tar -xzvf car_ims.tgz
+    ```
+    """
+
+    def __init__(
+        self, root: str, classes: List[int], transform: Optional[Callable] = None
+    ):
+        """Holds the cars196 dataset
+           REF: https://github.com/dichotomies/proxy-nca
+        Args:
+            root (Union[Path, str]): Paths to `cars` dirctory.
+            classes (List[int]): List of valid labels range(0,196)
+            transform (Optional[Callable], optional): transform to apply. Defaults to None.
+        """
+        super().__init__()
+        self.classes = classes
+        self.root = root
+        self.transform = transform
+        self.ys, self.im_paths, self.I = [], [], []
+        annos_fn = "cars_annos.mat"
+        cars = scipy.io.loadmat(os.path.join(root, annos_fn))
+        self.class_descriptions = [o[0] for o in cars["class_names"][0]]
+        self.cars = cars
+        ys = [int(a[5][0] - 1) for a in cars["annotations"][0]]
+        im_paths = [a[0][0] for a in cars["annotations"][0]]
+        index = 0
+        for im_path, y in zip(im_paths, ys):
+            if y in classes:  # choose only specified classes
+                self.im_paths.append(os.path.join(root, im_path))
+                self.ys.append(y)
+                self.I += [index]
+                index += 1
+
+    def nb_classes(self):
+        assert set(self.ys) == set(self.classes)
+        return len(self.classes)
+
+    def __len__(self):
+        return len(self.ys)
+
+    def __getitem__(self, index):
+        im = PIL.Image.open(self.im_paths[index])
+        # convert gray to rgb
+        if len(list(im.split())) == 1:
+            im = im.convert("RGB")
+        if self.transform is not None:
+            im = self.transform(im)
+        return im, self.ys[index], index
+
+    def get_label(self, index):
+        return self.ys[index]
+
+    def get_label_description(self, label_idx:int)->Union[str, int]:
+        if self.class_descriptions:
+            return self.class_descriptions[label_idx]
+        else: return str(label_idx)
+
+
 
 
 class FoodDataset(torch.utils.data.Dataset):
@@ -251,13 +211,18 @@ class FoodDataset(torch.utils.data.Dataset):
             im = self.transform(im)
         return im, self.ys[index], index
 
-    def get_label(self, index):
-        return self.classes[self.ys[index]]
+    def get_label(self, index:int)->int:
+        return self.ys[index]
+    
+    def get_label_description(self, label_idx:int)->str:
+
+        return str(self.classes[label_idx])
 
     @staticmethod
     def load_classes(filename):
         with open(filename, mode="r") as fp:
             return [l.strip() for l in fp.readlines()]
+        
 
 
 #################### Utils#########################
@@ -285,33 +250,46 @@ def remove_broken_images(image_paths: List[Path]) -> List:
     return parallel(verify_image, image_paths, progress=progress_bar, threadpool=True)
 
 
-def main():
+def reduce_batch_of_one(image: torch.Tensor) -> torch.Tensor:
+    """reduces a tensor along the batch dimension
 
-    # dm = CarsDataModule(
-    #     root="/mnt/c/Users/benja/workspace/data/cars", classes=range(0, 98)
-    # )
-    classes_filename = "/home/ubuntu/few-shot-metric-learning/src/UMPC-G20.txt"
-    classes = FoodDataset.load_classes(filename=classes_filename)
+    Args:
+        image (torch.Tensor): batch of one reduce
 
-    ds = FoodDataset("/mnt/vol_b/images", classes)
-    breakpoint()
+    Returns:
+        torch.Tensor: image
+    """
+    return image.squeeze(0)
 
 
-if __name__ == "__main__":
-    main()
+def make_transform_inception_v3(augment=False)->torch.Tensor:
+    """Transformation pipeline for loading data into the inception_v3 backbone.
 
-# dl_ev = torch.utils.data.DataLoader(
-#     dataset.load(
-#         name = args.dataset,
-#         root = config['dataset'][args.dataset]['root'],
-#         classes = config['dataset'][args.dataset]['classes']['eval'],
-#         transform = dataset.utils.make_transform(
-#             **config['transform_parameters'],
-#             is_train = False
-#         )
-#     ),
-#     batch_size = args.sz_batch,
-#     shuffle = False,
-#     num_workers = args.nb_workers,
-#     pin_memory = True
-# )
+    Args:
+        augment (bool, optional): if set data augmentation will be applied. Defaults to False.
+
+    Returns:
+        [torch.Tensor]: returns image as tensor. 
+    """
+
+    base_transforms = [
+        T.Resize(299),
+        T.CenterCrop(299),
+        T.ToTensor(),
+    ]
+
+    if augment:
+        base_transforms =base_transforms + [torch.nn.Sequential(
+            kornia.augmentation.RandomHorizontalFlip(),
+            kornia.augmentation.RandomGrayscale(),
+            kornia.augmentation.RandomRotation(degrees=180),
+        ), reduce_batch_of_one]
+
+    return transforms.Compose(
+            base_transforms
+            + [
+                T.Normalize(
+                    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+                )
+            ]
+        )

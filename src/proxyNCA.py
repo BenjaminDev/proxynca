@@ -1,5 +1,5 @@
 from random import randint
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Tuple, Union
 
 import plotly.graph_objects as go
 import pytorch_lightning as pl
@@ -164,7 +164,7 @@ class DML(pl.LightningModule):
         """Run a batch from the train dataset through the model"""
         images, target, _ = batch
         
-        loss, Xs = self.compute_loss(images, target)
+        loss, Xs = self.compute_loss(images, target,include_embeddings=True)
         self.log_dict({"train_loss": loss},prog_bar=True, on_step=True, on_epoch=False)
         return {"loss":loss, "Xs":Xs, "Ts":target }
 
@@ -179,13 +179,23 @@ class DML(pl.LightningModule):
 
         return {"Xs":Xs, "Ts":target, "index":index, "val_loss":val_loss.item()}
 
-    def validation_epoch_end(self, outputs):
+    def validation_epoch_end(self, outputs:Dict[str, Any])->None:
+        """Compute metrics on the full validation set.
+
+        Args:
+            outputs (Dict[str, Any]): Dict of values collected over each batch put through model.eval()(..) 
+        """
 
         val_Xs = torch.cat([h["Xs"] for h in outputs])
         val_Ts = torch.cat([h["Ts"] for h in outputs])
         val_indexes = torch.cat([h["index"] for h in outputs])
         Y = assign_by_euclidian_at_k(val_Xs.cpu(), val_Ts.cpu(), 8) 
         Y = torch.from_numpy(Y)
+        
+        # Return early when PL is running the sanity check.
+        if self.trainer.running_sanity_check:
+            return
+
         # Compute and Log R@k
         recall = []
         logs = {}
@@ -211,7 +221,7 @@ class DML(pl.LightningModule):
                                 y= projected[:, 1],
                                 mode='markers',
                                 marker_color=val_Ts.cpu(),
-                                text=[self.val_dataset.classes[o] for o in val_Ts.cpu()])) # hover text goes here
+                                text=[self.val_dataset.get_label_description(o) for o in val_Ts.cpu()])) # hover text goes here
         wandb.log({"Embedding of Validation Dataset": fig})
 
         # Project the proxies onto the same 2D space
@@ -230,8 +240,8 @@ class DML(pl.LightningModule):
         max_idx = len(top_k_indices) -1
         for i, example_result in enumerate(top_k_indices[[randint(0,max_idx) for _ in range(0,5)]]):
              
-            image_dict[f"global step {self.global_step} example: {i}"] = [wandb.Image(Image.open(self.val_dataset.im_paths[val_indexes[example_result[0]]]), caption=f"query: {self.val_dataset.get_label(val_indexes[example_result[0]])}") ]
-            image_dict[f"global step {self.global_step} example: {i}"].extend([wandb.Image(Image.open(self.val_dataset.im_paths[val_indexes[idx]]), caption=f"retrival:({rank}) {self.val_dataset.get_label(val_indexes[idx])}") for rank, idx in enumerate(example_result[1:])])
+            image_dict[f"global step {self.global_step} example: {i}"] = [wandb.Image(Image.open(self.val_dataset.im_paths[val_indexes[example_result[0]]]), caption=f"query: {self.val_dataset.get_label_description(val_indexes[example_result[0]])}") ]
+            image_dict[f"global step {self.global_step} example: {i}"].extend([wandb.Image(Image.open(self.val_dataset.im_paths[val_indexes[idx]]), caption=f"retrival:({rank}) {self.val_dataset.get_label_description(val_indexes[idx])}") for rank, idx in enumerate(example_result[1:])])
         self.logger.experiment.log(image_dict) 
         
         # Since validation set samples are iid I prefer looking at a histogram of valitation losses.
