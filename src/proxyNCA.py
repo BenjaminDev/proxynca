@@ -1,83 +1,57 @@
-from logging import log
-from numpy.core.shape_base import stack
-import numpy as np
+from random import randint
+from typing import Any, Dict, Tuple
+
 import plotly.graph_objects as go
 import pytorch_lightning as pl
-from pytorch_lightning import EvalResult, TrainResult
 import torch
-from torch import tensor
-from torch._C import dtype
 import torch.nn.functional as F
-from torch.nn import Parameter
-from torch import optim
-from torch.optim import lr_scheduler
 from PIL import Image
+from pytorch_lightning import EvalResult, TrainResult
+from torch import optim
+from sklearn.decomposition import PCA
+from torchvision import models
+from torch.nn import Parameter
+from torch.optim import lr_scheduler
+from torch.utils.data import Dataset
 import wandb
-import matplotlib.pyplot as plt
-from random import randint
-from evaluation import assign_by_euclidian_at_k, calc_recall_at_k, calc_normalized_mutual_information, cluster_by_kmeans
+from evaluation import (assign_by_euclidian_at_k,
+                        calc_normalized_mutual_information, calc_recall_at_k,
+                        cluster_by_kmeans)
 
 
-def binarize_and_smooth_labels(T, nb_classes, smoothing_const=0.1):
+def binarize_and_smooth_labels(T, num_classes, smoothing_const=0.1):
+    # REF: https://github.com/dichotomies/proxy-nca
     # Optional: BNInception uses label smoothing, apply it for retraining also
     # "Rethinking the Inception Architecture for Computer Vision", p. 6
     import sklearn.preprocessing
 
     T = T.cpu().numpy()
-    T = sklearn.preprocessing.label_binarize(T, classes=range(0, nb_classes))
+    T = sklearn.preprocessing.label_binarize(T, classes=range(0, num_classes))
     T = T * (1 - smoothing_const)
-    T[T == 0] = smoothing_const / (nb_classes - 1)
-    T = torch.FloatTensor(T)  # .cuda()
+    T[T == 0] = smoothing_const / (num_classes - 1)
+    T = torch.FloatTensor(T)
     return T
 
 
-class ProxyNCA(torch.nn.Module):
-    def __init__(
-        self, nb_classes, sz_embedding, smoothing_const=0.1, scaling_x=3, scaling_p=3
-    ):
-        super().__init__()
-        # initialize proxies s.t. norm of each proxy ~1 through div by 8
-        # i.e. proxies.norm(2, dim=1)) should be close to [1,1,...,1]
-        # TODO: use norm instead of div 8, because of embedding size
-        self.proxies = Parameter(torch.randn(nb_classes, sz_embedding) / 8)
-        self.smoothing_const = smoothing_const
-        self.scaling_x = scaling_x
-        self.scaling_p = scaling_p
-
-    def forward(self, X, T):
-        P = F.normalize(self.proxies, p=2, dim=-1) * self.scaling_p
-        X = F.normalize(X, p=2, dim=-1) * self.scaling_x
-        D = torch.cdist(X, P) ** 2
-        T = binarize_and_smooth_labels(T, len(P), self.smoothing_const)
-        if T.device != D.device:
-            T=T.to(D.device)
-        # note that compared to proxy nca, positive included in denominator
-        # breakpoint()
-        loss = torch.sum(-T * F.log_softmax(-D, -1), -1)
-        return loss.mean()
-from torchvision import models
-from torch.nn import Identity
-
-from sklearn.decomposition import PCA
-
-def denorm(img,mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)):
-        std_vec = torch.Tensor(std).unsqueeze(1).unsqueeze(1).to(img.device)
-        mean_vec = torch.Tensor(mean).unsqueeze(1).unsqueeze(1).to(img.device)
-        return img*std_vec+mean_vec
-
-def get_inception_v3_model(pretrained=True):
-
-    inception_v3 = models.inception_v3(pretrained=pretrained)
-    
-    return inception_v3
-
 class DML(pl.LightningModule):
-    def __init__(self, *,val_dataset,val_im_paths, nb_classes:int, sz_embedding:int=64, backbone:str="inception_v3", pooling:str="max",**kwargs) -> None:
+    """Distance Metric Learning"""
+    def __init__(self, *,val_dataset:Dataset, num_classes:int, sz_embedding:int=64, backbone:str="inception_v3",**kwargs) -> None:
+        """DML module
+
+        Args:
+            val_dataset (Dataset): dataset holding the validation data. 
+            num_classes (int): Number of classes.
+            sz_embedding (int, optional): Size of the embedding to use. Defaults to 64.
+            backbone (str, optional): Backbone architecture. Defaults to "inception_v3".
+
+        Raises:
+            NotImplementedError: On backbone architecture not supported.
+            NotImplementedError: On pooling type not supported.
+        """
         super().__init__()
         self.save_hyperparameters()
-        self.val_im_paths=val_im_paths
         self.val_dataset=val_dataset
-        # Backbone:
+        # Backbone
         if backbone == "inception_v3":
             inception = models.inception_v3(pretrained=self.hparams.pretrained or True)
             self.transform_input = True
@@ -98,23 +72,27 @@ class DML(pl.LightningModule):
             self.Mixed_6c = inception.Mixed_6c
             self.Mixed_6d = inception.Mixed_6d
             self.Mixed_6e = inception.Mixed_6e
-            # Auxilary head removed
             self.Mixed_7a = inception.Mixed_7a
             self.Mixed_7b = inception.Mixed_7b
             self.Mixed_7c = inception.Mixed_7c
+            
             self.in_features=2048
         else: raise NotImplementedError(f"backbone {backbone} is not supported!")
-        if pooling=="avg":
+        # Global Pooling
+        if self.hparams.pooling=="avg":
             self.global_pool = torch.nn.AvgPool2d (8, stride=1, padding=0, ceil_mode=True, count_include_pad=True)
-        elif pooling=="max":
+        elif self.hparams.pooling=="max":
             self.global_pool = torch.nn.MaxPool2d (8, stride=1, padding=0)
         else:
-            raise NotImplementedError(f"pooling {pooling} not supported!")
-            
+            raise NotImplementedError(f"pooling {self.hparams.pooling} not supported!")
+        # Embedding    
         self.embedding_layer = torch.nn.Linear(in_features=self.in_features, out_features=sz_embedding)
-        self.proxies = Parameter(torch.randn(nb_classes, sz_embedding) / 8, requires_grad=True)
+        # Proxies
+        self.proxies = Parameter(torch.randn(num_classes, sz_embedding) / 8, requires_grad=True)
         self.proxies.register_hook(lambda grad: self.logger.experiment.log({"proxy_grad":grad.cpu()})) 
+    
     def _transform_input(self, x):
+        """Fixes the difference between pytorch and tensorflow normalizing conventions"""
         if self.transform_input:
             x_ch0 = torch.unsqueeze(x[:, 0], 1) * (0.229 / 0.5) + (0.485 - 0.5) / 0.5
             x_ch1 = torch.unsqueeze(x[:, 1], 1) * (0.224 / 0.5) + (0.456 - 0.5) / 0.5
@@ -123,6 +101,7 @@ class DML(pl.LightningModule):
         return x
 
     def forward(self, x):
+        """REF: torchvision.models"""
         x = self._transform_input(x)
         # N x 3 x 299 x 299
         x = self.Conv2d_1a_3x3(x)
@@ -167,241 +146,101 @@ class DML(pl.LightningModule):
         x = self.embedding_layer(x)
         return x
 
-    def compute_loss(self, images, target, index=None,include_Xs_and_Ts=False):
+    def compute_loss(self, images, target, include_embeddings=False)->Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         X = self(images)
         # breakpoint()
         P = F.normalize(self.proxies, p = 2, dim = -1) * self.hparams.scaling_p
         X = F.normalize(X, p = 2, dim = -1) * self.hparams.scaling_x
         D = torch.cdist(X, P) ** 2
         T = binarize_and_smooth_labels(target, len(P), self.hparams.smoothing_const).to(X.device)
+        
         # note that compared to proxy nca, positive included in denominator
         loss = torch.sum(-T * F.log_softmax(-D, -1), -1)
-        # breakpoint()
-        if include_Xs_and_Ts and index is not None:
-            # breakpoint()
-            return loss.mean(), X, target # index.cpu()[D.topk(4, largest=False).indices.cpu()]
+        if include_embeddings:
+            return loss.mean(), X
         return loss.mean()
-    def training_step(self, batch, batch_idx):
+
+    def training_step(self, batch, batch_idx)-> Dict[str, Any]:
+        """Run a batch from the train dataset through the model"""
+        images, target, _ = batch
         
-        images, target, index = batch
-        # breakpoint()
-        loss = self.compute_loss(images, target)
-        # result = TrainResult(minimize=loss)
+        loss, Xs = self.compute_loss(images, target)
         self.log_dict({"train_loss": loss},prog_bar=True, on_step=True, on_epoch=False)
-        # result.log_dict({"examples": [wandb.Image(Image.open("/mnt/vol_b/cars/car_ims/014839.jpg"), caption="Label")]})
-        return loss
-        # return {"loss": loss, "train_loss":loss.item() }
+        return {"loss":loss, "Xs":Xs, "Ts":target }
 
 
-    def validation_step(self, batch, batch_idx) -> EvalResult:
+    def validation_step(self, batch, batch_idx) -> Dict[str, Any]:
+        """Run a batch from the validation dataset through the model"""
         images, target, index = batch
-        # breakpoint()
-        val_loss, Xs, Ts = self.compute_loss(images, target, index=index, include_Xs_and_Ts=True)
-        # breakpoint()
-        # result = EvalResult(checkpoint_on=val_loss)
+
+        val_loss, Xs = self.compute_loss(images, target, include_embeddings=True)
+
         self.log_dict({"val_loss":val_loss}, prog_bar=True, on_step=False, on_epoch=True)
 
-        # X, T, *_ = self.predict_batchwise(batch)
-        # result.hiddens = [X, T]
-        return {"Xs":Xs, "Ts":Ts, "index":index, "val_loss":val_loss.item()}
+        return {"Xs":Xs, "Ts":target, "index":index, "val_loss":val_loss.item()}
 
     def validation_epoch_end(self, outputs):
-        recall = []
-        logs = {}
-        # breakpoint()
+
         val_Xs = torch.cat([h["Xs"] for h in outputs])
         val_Ts = torch.cat([h["Ts"] for h in outputs])
         val_indexes = torch.cat([h["index"] for h in outputs])
-        Y = assign_by_euclidian_at_k(val_Xs.cpu(), val_Ts.cpu(), 8) # min(8, len(batch)))
+        Y = assign_by_euclidian_at_k(val_Xs.cpu(), val_Ts.cpu(), 8) 
         Y = torch.from_numpy(Y)
-        # breakpoint()
+        # Compute and Log R@k
+        recall = []
+        logs = {}
         for k in [1, 2, 4, 8]:
             r_at_k = 100*calc_recall_at_k(val_Ts.cpu(), Y, k)
             recall.append(r_at_k)
             logs[f"val_R@{k}"] = r_at_k
         self.log_dict(logs)
-        # breakpoint()
-        # image_label_index = [self.dm.val_dataset[o["index"][0]] for o in outputs][0]
+        
+        # Compute and log NMI
         nmi = 100*calc_normalized_mutual_information(
             val_Ts.cpu(),
             cluster_by_kmeans(
-                val_Xs.cpu(), self.hparams.nb_classes
+                val_Xs.cpu(), self.hparams.num_classes
             )
         )
         self.log_dict({"NMI":nmi})
         
-        
-
-        pca = PCA(2)  # project from 64 to 2 dimensions
+        # Inspect the embedding space.        
+        pca = PCA(2)  
         projected = pca.fit_transform(val_Xs.cpu())
-        # log_scatter(x,y,labels)
         fig = go.Figure(data=go.Scatter(x=projected[:, 0],
                                 y= projected[:, 1],
                                 mode='markers',
                                 marker_color=val_Ts.cpu(),
                                 text=[self.val_dataset.classes[o] for o in val_Ts.cpu()])) # hover text goes here
+        wandb.log({"Embedding of Validation Dataset": fig})
 
-        # fig.update_layout(title='Population of USA States')
-        wandb.log({"Embedding of Data": fig})
-        # fig.show()
-        # plt.scatter(projected[:, 0], projected[:, 1],
-        #     c=val_Ts.cpu(), edgecolor='none', alpha=0.5,
-        #     cmap=plt.cm.get_cmap('Spectral', 10))
-        # plt.xlabel('component 1')
-        # plt.ylabel('component 2')
-        # plt.colorbar()
-        # wandb.log({"Embedding of Data": plt})
-
+        # Project the proxies onto the same 2D space
         proxies = pca.transform(self.proxies.detach().cpu())
-        plt.scatter(proxies[:, 0], proxies[:, 1],
-            c=[o for o in range(0, len(self.proxies))], edgecolor='none', alpha=0.5,
-            cmap=plt.cm.get_cmap('Spectral', 10))
-        for i, x in enumerate(proxies): plt.annotate(self.val_dataset.classes[i], (x[0], x[1]))    
-        plt.xlabel('component 1')
-        plt.ylabel('component 2')
-        plt.colorbar()
-        wandb.log({"Embedding of Proxies": plt})
-        
+        fig = go.Figure(data=go.Scatter(x=proxies[:, 0],
+                                y= proxies[:, 1],
+                                mode='markers',
+                                marker_color=val_Ts.cpu(),
+                                text=[self.val_dataset.classes[o] for o in range(0,len(proxies))])) # hover text goes here
+        wandb.log({"Embedding of Proxies (on validation data)": fig})
 
-
-        
-        # Log top 4
-        # breakpoint()
+       
+        # Log a query and top 4 selction
         image_dict={}
         top_k_indices = torch.cdist(val_Xs,val_Xs).topk(5, largest=False).indices
         max_idx = len(top_k_indices) -1
         for i, example_result in enumerate(top_k_indices[[randint(0,max_idx) for _ in range(0,5)]]):
              
-            image_dict[f"global step {self.global_step} example: {i}"] = [wandb.Image(Image.open(self.val_im_paths[val_indexes[example_result[0]]]), caption=f"query: {self.val_dataset.get_label(val_indexes[example_result[0]])}") ]
-            image_dict[f"global step {self.global_step} example: {i}"].extend([wandb.Image(Image.open(self.val_im_paths[val_indexes[idx]]), caption=f"retrival:({rank}) {self.val_dataset.get_label(val_indexes[idx])}") for rank, idx in enumerate(example_result[1:])])
-        
-        wandb.log({f"val_loss_hist": wandb.Histogram([[h["val_loss"] for h in outputs]])})    
-        
-            # image_dict[f"example: {i}"] = [wandb.Image(self.dm.val_dataset[val_indexes[idx]][0], caption="query: {}") for idx in example_result]
-        # image_dict={"Query": [wandb.Image(self.dm.denorm(image_label_index[0]).clamp(0,1), caption="query: {}")]}
-        # for img_pth in image_paths:
-
+            image_dict[f"global step {self.global_step} example: {i}"] = [wandb.Image(Image.open(self.val_dataset.im_paths[val_indexes[example_result[0]]]), caption=f"query: {self.val_dataset.get_label(val_indexes[example_result[0]])}") ]
+            image_dict[f"global step {self.global_step} example: {i}"].extend([wandb.Image(Image.open(self.val_dataset.im_paths[val_indexes[idx]]), caption=f"retrival:({rank}) {self.val_dataset.get_label(val_indexes[idx])}") for rank, idx in enumerate(example_result[1:])])
         self.logger.experiment.log(image_dict) 
-    #     result = EvalResult()
-    #     result.log_dict({"avg_val_loss": outputs["val_loss"].mean()})
-    #     result.log_dict(logs)
-    #     return result
-
-    #     return torch.mean(outputs["val_loss"])
-
-    # def validation_epoch_end(self, outputs)-> EvalResult:
-    #     all_Xs = torch.empty(0).to(self.device)
-    #     all_Ts = torch.empty(0).to(self.device)
-    #     for X_T in outputs:
-    #         X, T = X_T
-    #         all_Xs = torch.cat([all_Xs, X])
-    #         all_Ts = torch.cat([all_Ts, T])
-    #     recall = []
-    #     logs = {}
-    #     breakpoint()
-    #     Y = assign_by_euclidian_at_k(all_Xs, all_Ts, 8) # min(8, len(batch)))
-    #     for k in [1, 2, 4, 8]:
-    #         r_at_k = calc_recall_at_k(all_Ts, Y, k)
-    #         recall.append(r_at_k)
-    #         logs[f"Val_R@{k}"] = r_at_k  # f"{r_at_k:.3f}"
-            
-
-    #         # logging.info("R@{} : {:.3f}".format(k, 100 * r_at_k))
-    #     # result.log_dict(logs)
-    #     # print(logs)
-    #     val_loss = self.criterion(all_Xs, all_Ts)
-    #     result = EvalResult(checkpoint_on=val_loss)
-    #     logs["val_loss"] = val_loss
-    #     result.log_dict(logs)
-    #     return result
-
-    def predict_batchwise(self, batch):
-        # list with N lists, where N = |{image, label, index}|
-        A = [[] for i in range(len(batch))]
-        # extract batches (A becomes list of samples)
-        for i, J in enumerate(batch):
-            # i = 0: sz_batch * images
-            # i = 1: sz_batch * labels
-            # i = 2: sz_batch * indices
-            if i == 0:
-                # move images to device of model (approximate device)
-                # J = J.to(list(model.parameters())[0].device)
-                # predict model output for image
-                J = self.model(J)
-            for j in J:
-                A[i].append(j)
-        return [torch.stack(A[i]) for i in range(len(A))]
-
-    def test_step(self, batch, batch_idx) -> EvalResult:
-
-        X, T, *_ = self.predict_batchwise(batch)
-        if self.test_Xs.device != X.device: self.test_Xs = self.test_Xs.to(X.device)
-        if self.test_Ts.device != T.device: self.test_Ts = self.test_Ts.to(T.device)
-
-        self.test_Xs = torch.cat([self.test_Xs, X])
-        self.test_Ts = torch.cat([self.test_Ts, T])
-
         
-        # Y = torch.from_numpy(Y)
-        # result = pl.EvalResult()
-
-    def test_epoch_end(self, *args, **kwargs):
-        recall = []
-        logs = {}
-        Y = assign_by_euclidian_at_k(self.test_Xs.cpu(), self.test_Ts.cpu(), 8) # min(8, len(batch)))
-        Y = torch.from_numpy(Y)
-        for k in [1, 2, 4, 8]:
-            r_at_k = 100*calc_recall_at_k(self.test_Ts.cpu(), Y, k)
-            recall.append(r_at_k)
-            logs[f"R@{k}"] = r_at_k  # f"{r_at_k:.3f}"
-            # logging.info("R@{} : {:.3f}".format(k, 100 * r_at_k))
-        # result.log_dict(logs)
-        # print(logs)
-        self.test_Ts = torch.empty(0, dtype=torch.int64)
-        self.test_Xs = torch.empty(0, dtype=torch.int64)
-        return logs
-
-
-    # def validation_step(self, batch, batch_idx):
-    #     images, target = batch
-    #     output = self(images)
-    #     loss_val = F.cross_entropy(output, target)
-    #     acc1, acc5 = self.__accuracy(output, target, topk=(1, 5))
-
-    #     output = OrderedDict({
-    #         'val_loss': loss_val,
-    #         'val_acc1': acc1,
-    #         'val_acc5': acc5,
-    #     })
-    #     return output
-
-    # def validation_epoch_end(self, outputs):
-    #     tqdm_dict = {}
-    #     for metric_name in ["val_loss", "val_acc1", "val_acc5"]:
-    #         tqdm_dict[metric_name] = torch.stack([output[metric_name] for output in outputs]).mean()
-
-    #     result = {'progress_bar': tqdm_dict, 'log': tqdm_dict, 'val_loss': tqdm_dict["val_loss"]}
-    #     return result
-
-    # @staticmethod
-    # def __accuracy(output, target, topk=(1,)):
-    #     """Computes the accuracy over the k top predictions for the specified values of k"""
-    #     with torch.no_grad():
-    #         maxk = max(topk)
-    #         batch_size = target.size(0)
-
-    #         _, pred = output.topk(maxk, 1, True, True)
-    #         pred = pred.t()
-    #         correct = pred.eq(target.view(1, -1).expand_as(pred))
-
-    #         res = []
-    #         for k in topk:
-    #             correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
-    #             res.append(correct_k.mul_(100.0 / batch_size))
-    #         return res
+        # Since validation set samples are iid I prefer looking at a histogram of valitation losses.
+        wandb.log({f"val_loss_hist": wandb.Histogram([[h["val_loss"] for h in outputs]])})    
 
     def configure_optimizers(self):
-        
+        """Setup the optimizer configuration."""
+
+        # backbone_parameters = set(self.parameters()).difference(set(self.embedding_layer))
         optimizer = optim.Adam(
             [
                 {
@@ -429,19 +268,3 @@ class DML(pl.LightningModule):
         # scheduler = lr_scheduler.CosineAnnealingLR(optimizer, gamma=0.94)
 
         return [optimizer], [scheduler]
-
-
-
-if __name__ == '__main__':
-
-    import random
-    nb_classes = 100
-    sz_batch = 32
-    sz_embedding = 64
-    X = torch.randn(sz_batch, sz_embedding).cuda()
-    breakpoint()
-    P = torch.randn(nb_classes, sz_embedding).cuda()
-    T = torch.randint(low=0, high=nb_classes, size=[sz_batch]).cuda()
-    criterion = ProxyNCA(nb_classes, sz_embedding).cuda()
-
-    print(criterion(X, T.view(sz_batch)))
