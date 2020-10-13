@@ -169,7 +169,7 @@ class DML(pl.LightningModule):
     def training_epoch_end(self, outputs):
         """"""
         # Since validation set samples are iid I prefer looking at a histogram of valitation losses.
-        wandb.log({f"val_loss_hist": wandb.Histogram([[h["loss"] for h in outputs]])})   
+        wandb.log({f"train_loss_hist": wandb.Histogram([[h["loss"].cpu() for h in outputs]])})   
 
     def validation_step(self, batch, batch_idx) -> Dict[str, Any]:
         """Run a batch from the validation dataset through the model"""
