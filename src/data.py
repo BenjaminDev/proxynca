@@ -53,10 +53,6 @@ class DMLDataModule(pl.LightningDataModule):
             root=self.root, classes=self.eval_classes, transform=self.eval_transform
         )
 
-        self.test_dataset = self.DataSetType(
-            root=self.root, classes=self.eval_classes, transform=self.eval_transform
-        )
-
     def train_dataloader(self):
         return DataLoader(
             dataset=self.train_dataset,
@@ -166,9 +162,7 @@ class CarsDataset(torch.utils.data.Dataset):
             return self.class_descriptions[label_idx]
         else: return str(label_idx)
 
-
-
-
+from collections import Counter
 class FoodDataset(torch.utils.data.Dataset):
     """
     Dataset for [UMPC-G20](http://visiir.lip6.fr/)
@@ -187,14 +181,16 @@ class FoodDataset(torch.utils.data.Dataset):
             transform ([Callable], optional): transform to apply. Defaults to None.
         """
         super().__init__()
-        self.classes = classes
+        normalize_names = lambda x: x.replace("-", "_") 
+        self.classes = [normalize_names(o) for o in classes]
         self.root = root
         self.transform = transform
 
         valid_image_paths = sorted([p for p in Path(self.root).glob(f"**/**/*.jpg")])
 
-        self.im_paths = [p for p in valid_image_paths if p.parent.stem in classes]
-        self.ys = [classes.index(p.parent.stem) for p in self.im_paths]
+        self.im_paths = [p for p in valid_image_paths if normalize_names(p.parent.stem) in self.classes]
+        self.ys = [self.classes.index(normalize_names(p.parent.stem)) for p in self.im_paths]
+        print(f"Class Counts: {Counter([normalize_names(p.parent.stem) for p in self.im_paths])}")
 
     def nb_classes(self):
         return len(self.classes)
@@ -281,7 +277,7 @@ def make_transform_inception_v3(augment=False)->torch.Tensor:
     if augment:
         base_transforms =base_transforms + [torch.nn.Sequential(
             kornia.augmentation.RandomHorizontalFlip(),
-            kornia.augmentation.RandomGrayscale(),
+            # kornia.augmentation.RandomGrayscale(p=0.001),
             kornia.augmentation.RandomRotation(degrees=180),
         ), reduce_batch_of_one]
 

@@ -222,16 +222,18 @@ class DML(pl.LightningModule):
         fig = go.Figure(data=go.Scatter(x=projected[:, 0],
                                 y= projected[:, 1],
                                 mode='markers',
-                                marker_color=val_Ts.cpu(),
-                                text=[self.val_dataset.get_label_description(o) for o in val_Ts.cpu()])) # hover text goes here
+                                marker_color=[o for o in range(0,self.hparams.num_classes)],
+                                text=[self.val_dataset.get_label_description(o) for o in Y[:,0]])) # hover text goes here
         wandb.log({"Embedding of Validation Dataset": fig})
+
+        wandb.sklearn.plot_confusion_matrix(val_Ts.cpu(), Y[:,0], labels=self.val_dataset.classes)
 
         # Project the proxies onto the same 2D space
         proxies = pca.transform(self.proxies.detach().cpu())
         fig = go.Figure(data=go.Scatter(x=proxies[:, 0],
                                 y= proxies[:, 1],
                                 mode='markers',
-                                marker_color=val_Ts.cpu(),
+                                marker_color=range(0,len(proxies)),
                                 text=[self.val_dataset.get_label_description(o) for o in range(0,len(proxies))])) # hover text goes here
         wandb.log({"Embedding of Proxies (on validation data)": fig})
 
@@ -251,32 +253,36 @@ class DML(pl.LightningModule):
 
     def configure_optimizers(self):
         """Setup the optimizer configuration."""
+        parameters = [p for p in self.parameters()]
+        backbone_parameters = parameters[:-2]
+        embedding_parameters = parameters[-2:-1]
+        proxy_parameters = parameters[-1:]
 
-        # backbone_parameters = set(self.parameters()).difference(set(self.embedding_layer))
+        
         optimizer = optim.Adam(
             [
                 {
-                    "params": self.parameters(),
+                    "params": backbone_parameters,
                     "lr": self.hparams.lr_backbone,
                     "eps": 1.0,
                     "weight_decay": self.hparams.weight_decay_backbone,
                 },
-                # {
-                #     "params": self.backbone.fc.parameters(),
-                #     "lr": self.hparams.lr_embedding,
-                #     "eps": 1.0,
-                #     "weight_decay": self.hparams.weight_decay_embedding,
-                # },
-                # {
-                #     "params": self.proxies,
-                #     "lr": self.hparams.lr,
-                #     "eps": 1.0,
-                #     "weight_decay": self.hparams.weight_decay_proxynca,
-                # },
+                {
+                    "params": embedding_parameters,
+                    "lr": self.hparams.lr_embedding,
+                    "eps": 1.0,
+                    "weight_decay": self.hparams.weight_decay_embedding,
+                },
+                {
+                    "params": proxy_parameters,
+                    "lr": self.hparams.lr,
+                    "eps": 1.0,
+                    "weight_decay": self.hparams.weight_decay_proxynca,
+                },
             ],
         )
 
-        scheduler = lr_scheduler.ExponentialLR(optimizer, gamma=0.94)
-        # scheduler = lr_scheduler.CosineAnnealingLR(optimizer, gamma=0.94)
+        # scheduler = lr_scheduler.ExponentialLR(optimizer, gamma=0.94)
+        scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.hparams.lr)
 
         return [optimizer], [scheduler]
