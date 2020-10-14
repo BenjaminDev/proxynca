@@ -2,6 +2,7 @@ from random import randint
 from typing import Any, Dict, Tuple, Union
 
 import plotly.graph_objects as go
+# import plotly.express as px
 import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
@@ -17,6 +18,41 @@ from evaluation import (assign_by_euclidian_at_k,
                         calc_normalized_mutual_information, calc_recall_at_k,
                         cluster_by_kmeans)
 
+colors_by_name = ["aliceblue", "antiquewhite", "aqua", "aquamarine", "azure",
+            "beige", "bisque", "black", "blanchedalmond", "blue",
+            "blueviolet", "brown", "burlywood", "cadetblue",
+            "chartreuse", "chocolate", "coral", "cornflowerblue",
+            "cornsilk", "crimson", "cyan", "darkblue", "darkcyan",
+            "darkgoldenrod", "darkgray", "darkgrey", "darkgreen",
+            "darkkhaki", "darkmagenta", "darkolivegreen", "darkorange",
+            "darkorchid", "darkred", "darksalmon", "darkseagreen",
+            "darkslateblue", "darkslategray", "darkslategrey",
+            "darkturquoise", "darkviolet", "deeppink", "deepskyblue",
+            "dimgray", "dimgrey", "dodgerblue", "firebrick",
+            "floralwhite", "forestgreen", "fuchsia", "gainsboro",
+            "ghostwhite", "gold", "goldenrod", "gray", "grey", "green",
+            "greenyellow", "honeydew", "hotpink", "indianred", "indigo",
+            "ivory", "khaki", "lavender", "lavenderblush", "lawngreen",
+            "lemonchiffon", "lightblue", "lightcoral", "lightcyan",
+            "lightgoldenrodyellow", "lightgray", "lightgrey",
+            "lightgreen", "lightpink", "lightsalmon", "lightseagreen",
+            "lightskyblue", "lightslategray", "lightslategrey",
+            "lightsteelblue", "lightyellow", "lime", "limegreen",
+            "linen","magenta", "maroon", "mediumaquamarine",
+            "mediumblue", "mediumorchid", "mediumpurple",
+            "mediumseagreen", "mediumslateblue", "mediumspringgreen",
+            "mediumturquoise", "mediumvioletred", "midnightblue",
+            "mintcream", "mistyrose", "moccasin", "navajowhite", "navy",
+            "oldlace", "olive", "olivedrab", "orange", "orangered",
+            "orchid", "palegoldenrod", "palegreen", "paleturquoise",
+            "palevioletred", 'papayawhip', "peachpuff", 'peru', "pink",
+            'plum', "powderblue", 'purple', "red", 'rosybrown',
+            "royalblue", "rebeccapurple", "saddlebrown", "salmon",
+            "sandybrown", "seagreen", "seashell", "sienna", "silver",
+            "skyblue", "slateblue", "slategray", "slategrey", "snow",
+            "springgreen", "steelblue", 'tan', "teal", "thistle", "tomato",
+            "turquoise", "violet", "wheat", "white", "whitesmoke",
+            "yellow", "yellowgreen"]
 
 def binarize_and_smooth_labels(T, num_classes, smoothing_const=0.1):
     # REF: https://github.com/dichotomies/proxy-nca
@@ -168,7 +204,7 @@ class DML(pl.LightningModule):
 
     def training_epoch_end(self, outputs):
         """"""
-        # Since validation set samples are iid I prefer looking at a histogram of valitation losses.
+        # Since validation set samples are iid I prefer looking at a histogram of validation losses.
         wandb.log({f"train_loss_hist": wandb.Histogram([[h["loss"].cpu() for h in outputs]])})   
 
     def validation_step(self, batch, batch_idx) -> Dict[str, Any]:
@@ -222,19 +258,19 @@ class DML(pl.LightningModule):
         fig = go.Figure(data=go.Scatter(x=projected[:, 0],
                                 y= projected[:, 1],
                                 mode='markers',
-                                marker_color=[o for o in range(0,self.hparams.num_classes)],
+                                # marker_color=[colors[o%len(colors)] for o in range(0,self.hparams.num_classes)],
                                 text=[self.val_dataset.get_label_description(o) for o in Y[:,0]])) # hover text goes here
         wandb.log({"Embedding of Validation Dataset": fig})
 
-        wandb.sklearn.plot_confusion_matrix(val_Ts.cpu(), Y[:,0], labels=self.val_dataset.classes)
+        wandb.sklearn.plot_confusion_matrix(val_Ts.cpu().numpy(), Y[:,0], labels=self.val_dataset.classes)
 
         # Project the proxies onto the same 2D space
         proxies = pca.transform(self.proxies.detach().cpu())
         fig = go.Figure(data=go.Scatter(x=proxies[:, 0],
                                 y= proxies[:, 1],
                                 mode='markers',
-                                marker_color=range(0,len(proxies)),
-                                text=[self.val_dataset.get_label_description(o) for o in range(0,len(proxies))])) # hover text goes here
+                                # marker_color=[colors[o%len(colors)] for o in range(0,self.hparams.num_classes)],
+                                text=[self.val_dataset.get_label_description(o) for o in range(0,self.hparams.num_classes)])) # hover text goes here
         wandb.log({"Embedding of Proxies (on validation data)": fig})
 
        
