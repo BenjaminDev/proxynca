@@ -1,6 +1,7 @@
 from random import randint
+import random
 from typing import Any, Dict, Tuple, Union
-
+from sklearn.metrics import confusion_matrix
 import plotly.graph_objects as go
 # import plotly.express as px
 import pytorch_lightning as pl
@@ -53,6 +54,9 @@ colors_by_name = ["aliceblue", "antiquewhite", "aqua", "aquamarine", "azure",
             "springgreen", "steelblue", 'tan', "teal", "thistle", "tomato",
             "turquoise", "violet", "wheat", "white", "whitesmoke",
             "yellow", "yellowgreen"]
+
+random.seed(30)
+colors_by_name = [r] 
 
 def binarize_and_smooth_labels(T, num_classes, smoothing_const=0.1):
     # REF: https://github.com/dichotomies/proxy-nca
@@ -253,24 +257,33 @@ class DML(pl.LightningModule):
         self.log_dict({"NMI":nmi})
         
         # Inspect the embedding space.        
-        pca = PCA(2)  
+        pca = PCA(3)  
         projected = pca.fit_transform(val_Xs.cpu())
-        fig = go.Figure(data=go.Scatter(x=projected[:, 0],
-                                y= projected[:, 1],
-                                mode='markers',
-                                # marker_color=[colors[o%len(colors)] for o in range(0,self.hparams.num_classes)],
-                                text=[self.val_dataset.get_label_description(o) for o in Y[:,0]])) # hover text goes here
+        # fig = go.Figure(data=go.Scatter(x=projected[:, 0],
+        #                         y= projected[:, 1],
+        #                         mode='markers',
+        #                         marker_color=[colors_by_name[o%len(colors_by_name)] for o in range(0,self.hparams.num_classes)],
+        #                         text=[self.val_dataset.get_label_description(o) for o in Y[:,0]])) # hover text goes here
+        fig = go.Figure(data=[go.Scatter3d(x=projected[:, 0], y=projected[:, 1], z=projected[:, 2],
+                                   marker_color=[colors_by_name[o%len(colors_by_name)] for o in range(0,len(Y[:,0]))],
+                                   text=[self.val_dataset.get_label_description(o) for o in Y[:,0]], 
+                                   mode='markers')])
         wandb.log({"Embedding of Validation Dataset": fig})
 
         wandb.sklearn.plot_confusion_matrix(val_Ts.cpu().numpy(), Y[:,0], labels=self.val_dataset.classes)
-
+            
         # Project the proxies onto the same 2D space
         proxies = pca.transform(self.proxies.detach().cpu())
-        fig = go.Figure(data=go.Scatter(x=proxies[:, 0],
-                                y= proxies[:, 1],
-                                mode='markers',
-                                # marker_color=[colors[o%len(colors)] for o in range(0,self.hparams.num_classes)],
-                                text=[self.val_dataset.get_label_description(o) for o in range(0,self.hparams.num_classes)])) # hover text goes here
+        # fig = go.Figure(data=go.Scatter(x=proxies[:, 0],
+        #                         y= proxies[:, 1],
+        #                         mode='markers',
+        #                         pythoncolor=[colors_by_name[o%len(colors_by_name)] for o in range(0,self.hparams.num_classes)],
+        #                         text=[self.val_dataset.get_label_description(o) for o in range(0,self.hparams.num_classes)])) # hover text goes here
+        fig = go.Figure(data=[go.Scatter3d(x=proxies[:,0], y=proxies[:,1], z=proxies[:,2],
+                                   mode='markers',
+                                   marker_color=[colors_by_name[o%len(colors_by_name)] for o in range(0,self.hparams.num_classes)],
+                                   text=[self.val_dataset.get_label_description(o) for o in range(0,self.hparams.num_classes)]) # hover text goes here
+                                   ])
         wandb.log({"Embedding of Proxies (on validation data)": fig})
 
        
