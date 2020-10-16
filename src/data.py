@@ -15,6 +15,7 @@ from fastprogress import progress_bar
 from torch.utils.data import DataLoader, dataset
 from torchvision import transforms
 from torchvision.utils import make_grid
+import wandb
 
 cars_mean = (0.485, 0.456, 0.406)
 cars_std = (0.229, 0.224, 0.225)
@@ -44,7 +45,7 @@ class DMLDataModule(pl.LightningDataModule):
         self.batch_size = batch_size
         self.num_classes = len(classes)
 
-    def setup(self):
+    def setup(self, project_name:str):
         self.train_dataset = self.DataSetType(
             root=self.root, classes=self.classes, transform=self.train_transform
         )
@@ -52,6 +53,16 @@ class DMLDataModule(pl.LightningDataModule):
         self.val_dataset = self.DataSetType(
             root=self.root, classes=self.eval_classes, transform=self.eval_transform
         )
+
+        def plot_class_distributions(ys, classes):
+            import plotly.graph_objects as go
+            labels, counts = zip(*Counter(ys).items())
+            labels=[classes[o] for o in labels]
+            fig = go.Figure([go.Bar(x=labels, y=counts)])
+            return fig
+        wandb.init(name=self.name, project=project_name, reinit=True)
+        wandb.log({"Validation Class Distribution": plot_class_distributions(ys=self.val_dataset.ys, classes=self.val_dataset.classes)})
+        wandb.log({"Train Class Distribution": plot_class_distributions(ys=self.train_dataset.ys, classes=self.train_dataset.classes)})
 
     def train_dataloader(self):
         return DataLoader(
@@ -192,6 +203,7 @@ class FoodDataset(torch.utils.data.Dataset):
         self.ys = [self.classes.index(normalize_names(p.parent.stem)) for p in self.im_paths]
         print(f"Class Counts: {Counter([normalize_names(p.parent.stem) for p in self.im_paths])}")
 
+
     def nb_classes(self):
         return len(self.classes)
 
@@ -220,6 +232,7 @@ class FoodDataset(torch.utils.data.Dataset):
             return [l.strip() for l in fp.readlines()]
         
 
+dataset_names={FoodDataset:"UMP-G20", CarsDataset:"Cars196"}
 
 #################### Utils#########################
 def verify_image(fn):
