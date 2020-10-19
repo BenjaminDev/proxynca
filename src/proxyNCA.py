@@ -266,51 +266,52 @@ class DML(pl.LightningModule):
         )
         self.log_dict({"NMI":nmi})
         
-        # Inspect the embedding space.        
+        # Inspect the embedding space in 2 and 3 dimensions.        
         if 2 in self.hparams.vis_dim:
             pca = PCA(2)  
             projected = pca.fit_transform(val_Xs.cpu())
             proxies = pca.transform(self.proxies.detach().cpu())
+            fig_embedded_data = go.Figure()
+            for cls_idx, cls_name in enumerate(self.val_dataset.classes):
+                x_s = [o for i, o in enumerate(projected[:, 0]) if  self.val_dataset.get_label_description(Y[i,0])==cls_name]
+                y_s = [o for i, o in enumerate(projected[:, 1]) if  self.val_dataset.get_label_description(Y[i,0])==cls_name]
+                marker_color =colors_by_name[cls_idx%len(colors_by_name)]
+                fig_embedded_data.add_scatter(x=x_s, y=y_s, marker_color=marker_color, text=cls_name, name=cls_name, mode="markers")
 
-            fig_embedded_data = go.Figure(data=go.Scatter(x=projected[:, 0],
-                                    y= projected[:, 1],
-                                    mode='markers',
-                                    marker_color=[colors_by_name[o%len(colors_by_name)] for o in Y[:,0]],
-                                    text=[self.val_dataset.get_label_description(o) for o in Y[:,0]]))
+                                    
             wandb.log({"Embedding of Validation Dataset 2D": fig_embedded_data})
             
-            fig_embedded_proxies = go.Figure(data=go.Scatter(x=proxies[:, 0],
-                                y= proxies[:, 1],
-                                mode='markers',
-                                marker_color=[colors_by_name[o%len(colors_by_name)] for o in range(0,self.hparams.num_classes)],
-                                text=[self.val_dataset.get_label_description(o) for o in range(0,self.hparams.num_classes)]))
+
+            fig_embedded_proxies = go.Figure()
+            for cls_name, x_y in zip(self.val_dataset.classes, proxies):
+                x_s = [o for i, o in enumerate(proxies[:, 0]) if  self.val_dataset.get_label_description(Y[i,0])==cls_name]
+                y_s = [o for i, o in enumerate(proxies[:, 1]) if  self.val_dataset.get_label_description(Y[i,0])==cls_name]
+                marker_color =colors_by_name[self.val_dataset.classes.index(cls_name)%len(colors_by_name)]
+                fig_embedded_proxies.add_scatter(x=[x_y[0]], y=[x_y[1]], marker_color=marker_color, text=cls_name, name=cls_name, mode="markers")
             wandb.log({"Embedding of Proxies (on validation data) 2D": fig_embedded_proxies})
             
         if 3 in self.hparams.vis_dim:
             pca = PCA(3)  
             projected = pca.fit_transform(val_Xs.cpu())
             proxies = pca.transform(self.proxies.detach().cpu())
-            
-            fig_embedded_data = go.Figure(data=[go.Scatter3d(x=projected[:, 0], y=projected[:, 1], z=projected[:, 2],
-                                    marker_color=[colors_by_name[o%len(colors_by_name)] for o in Y[:,0]],
-                                    text=[self.val_dataset.get_label_description(o) for o in Y[:,0]], 
-                                    mode='markers')])
-        
+            fig_embedded_data = go.Figure()
+
+            for cls_idx, cls_name in enumerate(self.val_dataset.classes):
+                x_s = [o for i, o in enumerate(projected[:, 0]) if  self.val_dataset.get_label_description(Y[i,0])==cls_name]
+                y_s = [o for i, o in enumerate(projected[:, 1]) if  self.val_dataset.get_label_description(Y[i,0])==cls_name]
+                z_s = [o for i, o in enumerate(projected[:, 2]) if  self.val_dataset.get_label_description(Y[i,0])==cls_name]
+                marker_color =colors_by_name[cls_idx%len(colors_by_name)]
+                fig_embedded_data.add_scatter3d(x=x_s, y=y_s,z=z_s, marker_color=marker_color, text=cls_name, name=cls_name, mode="markers")
             wandb.log({"Embedding of Validation Dataset 3D": fig_embedded_data})
-            fig_embedded_proxies = go.Figure(data=[go.Scatter3d(x=proxies[:,0], y=proxies[:,1], z=proxies[:,2],
-                        mode='markers',
-                        marker_color=[colors_by_name[o%len(colors_by_name)] for o in range(0,self.hparams.num_classes)],
-                        text=[self.val_dataset.get_label_description(o) for o in range(0,self.hparams.num_classes)]) # hover text goes here
-                        ])
+            fig_embedded_proxies = go.Figure()
+            for cls_name, x_y_z in zip(self.val_dataset.classes, proxies):
+                marker_color =colors_by_name[self.val_dataset.classes.index(cls_name)%len(colors_by_name)]
+                fig_embedded_proxies.add_scatter3d(x=[x_y_z[0]], y=[x_y_z[1]],z=[x_y_z[2]], marker_color=marker_color, text=cls_name, name=cls_name, mode="markers")
             wandb.log({"Embedding of Proxies (on validation data) 3D": fig_embedded_proxies})
-        
+         
         cm = confusion_matrix(y_true=val_Ts.cpu().numpy(), y_pred=Y[:,0].cpu().numpy(), labels=[o for o in range(0, len(self.val_dataset.classes))])
         fig_cm = ff.create_annotated_heatmap(cm, x=self.val_dataset.classes, y=self.val_dataset.classes, annotation_text=cm.astype(str), colorscale='Viridis')    
-
         wandb.log({"Confusion Matrix": fig_cm})
-
-
-
        
         # Log a query and top 4 selction
         image_dict={}
@@ -356,7 +357,7 @@ class DML(pl.LightningModule):
             ],
         )
 
-        # scheduler = lr_scheduler.ExponentialLR(optimizer, gamma=0.94)
-        scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.hparams.lr)
+        scheduler = lr_scheduler.ExponentialLR(optimizer, gamma=0.94)
+        # scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.hparams.lr)
 
         return [optimizer], [scheduler]
