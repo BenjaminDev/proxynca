@@ -38,7 +38,7 @@ class DMLDataModule(pl.LightningDataModule):
         self.name = name
         self.DataSetType = DataSetType
         self.root = root
-        self.classes = classes
+        self.classes = [o for o in classes]
         self.eval_classes = eval_classes
         self.train_transform = train_transform
         self.eval_transform = eval_transform
@@ -131,7 +131,7 @@ class CarsDataset(torch.utils.data.Dataset):
             transform (Optional[Callable], optional): transform to apply. Defaults to None.
         """
         super().__init__()
-        self.classes = classes
+        self.classes = [o for o in classes]
         self.root = root
         self.transform = transform
         self.ys, self.im_paths, self.I = [], [], []
