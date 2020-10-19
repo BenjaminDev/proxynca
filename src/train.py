@@ -15,8 +15,8 @@ wandb.init(name=dataset_names[FoodDataset], project=project_name,reinit=True)
 dm = DMLDataModule(
     name=dataset_names[FoodDataset],
     DataSetType=FoodDataset,
-    root="/mnt/vol_b/images",
-    # root="/mnt/vol_b/UPMC_Food101/images/",
+    # root="/mnt/vol_b/images",
+    root="/mnt/vol_b/UPMC_Food101/images/",
     classes=food_classes[::2],
     eval_classes=food_classes[1::2],
     

@@ -9,6 +9,7 @@ import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
 from PIL import Image
+import numpy as np
 from torch import optim
 from sklearn.decomposition import PCA
 from torchvision import models
@@ -65,7 +66,8 @@ def binarize_and_smooth_labels(T, num_classes, smoothing_const=0.1):
     # "Rethinking the Inception Architecture for Computer Vision", p. 6
     import sklearn.preprocessing
 
-    T = T.cpu().numpy()
+    
+    
     T = sklearn.preprocessing.label_binarize(T, classes=range(0, num_classes))
     T = T * (1 - smoothing_const)
     T[T == 0] = smoothing_const / (num_classes - 1)
@@ -195,9 +197,22 @@ class DML(pl.LightningModule):
         P = F.normalize(self.proxies, p = 2, dim = -1) * self.hparams.scaling_p
         X = F.normalize(X, p = 2, dim = -1) * self.hparams.scaling_x
         D = torch.cdist(X, P) ** 2
-        if drop_labels:
+        if drop_labels or True:
             # Simple implementation of see section X of report.
-            pass #target
+            #  Assume one in every 8 samples is labelled.
+        
+            tk=D.topk(k=1, largest=False)
+            new_target=[]
+            for i, t in enumerate(target):
+                # Assume 7 in 8 samples has no label. TODO: Move this logic to the dataloader
+                if random.choices([True, True, True, True, True, True, True,False]):
+                    new_target.append(tk.indices[i].item())
+                else:
+                    new_target.append(t.item())
+            target = np.array(new_target)
+        else:
+            target = target.cpu().numpy()
+
         T = binarize_and_smooth_labels(target, len(P), self.hparams.smoothing_const).to(X.device)
         
         # note that compared to proxy nca, positive included in denominator
