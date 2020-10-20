@@ -193,7 +193,7 @@ class FoodDataset(torch.utils.data.Dataset):
             transform ([Callable], optional): transform to apply. Defaults to None.
         """
         super().__init__()
-        breakpoint()
+
         normalize_names = lambda x: x.replace("-", "_") 
         self.classes = [normalize_names(o) for o in classes]
         self.root = root

@@ -4,14 +4,14 @@ experiment:
     max_epochs: 50
     gpus: 1
 
-# dataset:
-#     name: "Cars196"
-#     root: "/mnt/vol_b/cars/" 
-
 dataset:
-    name: "UMPC-Food101"
-    root: "/mnt/vol_b/UPMC_Food101/images/" 
-    classes_filename: "/home/ubuntu/few-shot-metric-learning/src/UMPC-G20.txt"
+    name: "Cars196"
+    root: "/mnt/vol_b/cars/" 
+
+# dataset:
+#     name: "UMPC-Food101"
+#     root: "/mnt/vol_b/UPMC_Food101/images/" 
+#     classes_filename: "/home/ubuntu/few-shot-metric-learning/src/UMPC-G20.txt"
 
 # dataset:
 #     name: "UMPC-G20"

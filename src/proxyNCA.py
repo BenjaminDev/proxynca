@@ -198,7 +198,7 @@ class DML(pl.LightningModule):
         X = F.normalize(X, p = 2, dim = -1) * self.hparams.scaling_x
         D = torch.cdist(X, P) ** 2
         
-        T = binarize_and_smooth_labels(target, len(P), self.hparams.smoothing_const).to(X.device)
+        T = binarize_and_smooth_labels(target.cpu().numpy(), len(P), self.hparams.smoothing_const).to(X.device)
         # TODO: If one wants to incorporate unlabelled data then it's advised to insert 
         # distance proportional values into T.  
         # note that compared to proxy nca, positive included in denominator

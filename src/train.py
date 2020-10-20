@@ -7,7 +7,7 @@ from proxyNCA import DML
 from ast import literal_eval
 import wandb
 conf = OmegaConf.load('src/config.yml')
-if conf.dataset.name in ["UMPC-G20", "UMPC_Food101"]:
+if conf.dataset.name in ["UMPC-G20", "UMPC-Food101"]:
     classes_filename = conf.dataset.classes_filename
     food_classes = FoodDataset.load_classes(classes_filename)
     classes=food_classes[::2]
@@ -22,7 +22,7 @@ elif conf.dataset.name in ["Cars196"]:
     eval_classes=range(98, 196)
 else:
     raise NotImplementedError(f"Dataset {conf.dataset.name} is not supported!")
-breakpoint()
+
 dm = DMLDataModule(
     name=DataSetType.name,
     DataSetType=DataSetType,
