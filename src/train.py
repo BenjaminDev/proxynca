@@ -1,78 +1,69 @@
 from pytorch_lightning import Trainer
 import pytorch_lightning
 from pytorch_lightning.loggers import WandbLogger
- 
+from omegaconf import OmegaConf 
 from data import DMLDataModule, make_transform_inception_v3, FoodDataset, CarsDataset, dataset_names
 from proxyNCA import DML
+from ast import literal_eval
 import wandb
-classes_filename = "/home/ubuntu/few-shot-metric-learning/src/UMPC-G20.txt"
-food_classes = FoodDataset.load_classes(classes_filename)
-project_name="ProxyNCA-v2"
-batch_size=32
-gradient_clip_val=2.0
-wandb.init(name=dataset_names[FoodDataset], project=project_name,reinit=True)
+conf = OmegaConf.load('src/config.yml')
+if conf.dataset.name in ["UMPC-G20", "UMPC_Food101"]:
+    classes_filename = conf.dataset.classes_filename
+    food_classes = FoodDataset.load_classes(classes_filename)
+    classes=food_classes[::2]
+    eval_classes=food_classes[1::2]
+    DataSetType=FoodDataset
 
+elif conf.dataset.name in ["Cars196"]:
+    name="Cars196",
+    DataSetType=CarsDataset
+    root="/mnt/vol_b/cars"
+    classes=range(0, 98)
+    eval_classes=range(98, 196)
+else:
+    raise NotImplementedError(f"Dataset {conf.dataset.name} is not supported!")
+breakpoint()
 dm = DMLDataModule(
-    name=dataset_names[FoodDataset],
-    DataSetType=FoodDataset,
-    # root="/mnt/vol_b/images",
-    root="/mnt/vol_b/UPMC_Food101/images/",
-    classes=food_classes[::2],
-    eval_classes=food_classes[1::2],
+    name=DataSetType.name,
+    DataSetType=DataSetType,
+    root=conf.dataset.root,
+    classes=classes,
+    eval_classes=eval_classes,
     
-    # name="Cars196",
-    # DataSetType=CarsDataset,
-    # root="/mnt/vol_b/cars",
-    # classes=range(0, 98),
-    # eval_classes=range(98, 196),
 
-    batch_size=batch_size,
+    batch_size=conf.model.batch_size,
     train_transform=make_transform_inception_v3(augment=True),
     eval_transform=make_transform_inception_v3(augment=False)
 )
 
-wandb_logger = WandbLogger(name=dm.name, project=project_name, save_dir="/mnt/vol_b/models/few-shot")
-dm.setup(project_name=project_name)
-load_from_pth = "/home/ubuntu/few-shot-metric-learning/lightning_logs/version_11/checkpoints/epoch=0.ckpt"
-if load_from_pth and  False:
-    model = DML.load_from_checkpoint(load_from_pth)
-else:
+wandb_logger = WandbLogger(name=dm.name, project=dataset_names[DataSetType], save_dir="/mnt/vol_b/models/few-shot")
+dm.setup(project_name=dataset_names[DataSetType])
 
-    model = DML(
-        val_dataset=dm.val_dataset,
-        num_classes=dm.num_classes,
-        pooling="max",
-        pretrained=True,
-        lr_backbone=0.01,
-        weight_decay_backbone=0.0,
-        lr_embedding=0.001,
-        weight_decay_embedding=0.0,
-        lr=0.001,
-        weight_decay_proxynca=0.0,
-        dataloader=dm.train_dataloader(),
-        scaling_x=3.0,
-        scaling_p=3.0,
-        smoothing_const=0.1,
-        vis_dim=(2,3),
-        batch_size=batch_size
-    )
-from pytorch_lightning.callbacks.lr_monitor import LearningRateMonitor
-lr_logger = LearningRateMonitor(logging_interval='step')
 
-trainer = Trainer(max_epochs=50, gpus=1,
+model = DML(
+    val_dataset=dm.val_dataset,
+    num_classes=dm.num_classes,
+    pooling=conf.model.pooling,
+    pretrained=conf.model.pretrained,
+    lr_backbone=conf.model.lr_backbone,
+    weight_decay_backbone=conf.model.weight_decay_backbone,
+    lr_embedding=conf.model.lr_embedding,
+    weight_decay_embedding=conf.model.weight_decay_embedding,
+    lr=conf.model.lr,
+    weight_decay_proxynca=conf.model.weight_decay_proxynca,
+    dataloader=dm.train_dataloader(),
+    scaling_x=conf.model.scaling_x,
+    scaling_p=conf.model.scaling_p,
+    smoothing_const=conf.model.smoothing_const,
+    batch_size=conf.model.batch_size,
+
+    vis_dim=literal_eval(conf.model.vis_dim),
+)
+
+
+trainer = Trainer(max_epochs=conf.experiment.max_epochs, gpus=conf.experiment.gpus,
                      logger=wandb_logger,
-                    #  logger=True,
-                    
-                    #  fast_dev_run=True,
-                    #  val_check_interval=0.1,
-                    #  limit_val_batches=0.0,
-                    gradient_clip_val=gradient_clip_val,
-                    # auto_lr_find="lr",
-                    #  overfit_batches=1,
-                    # weights_summary='full',
-                    # track_grad_norm=2,
-                    callbacks=[lr_logger]
-                     )
+                    gradient_clip_val=conf.model.gradient_clip_val,                     )
 #  Start training
 trainer.fit(model, datamodule=dm)
 

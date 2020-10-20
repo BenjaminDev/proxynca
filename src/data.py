@@ -119,14 +119,14 @@ class CarsDataset(torch.utils.data.Dataset):
     tar -xzvf car_ims.tgz
     ```
     """
-
+    name="Cars196"
     def __init__(
         self, root: str, classes: List[int], transform: Optional[Callable] = None
     ):
         """Holds the cars196 dataset
            REF: https://github.com/dichotomies/proxy-nca
         Args:
-            root (Union[Path, str]): Paths to `cars` dirctory.
+            root (Union[Path, str]): Paths to `cars` directory.
             classes (List[int]): List of valid labels range(0,196)
             transform (Optional[Callable], optional): transform to apply. Defaults to None.
         """
@@ -180,6 +180,7 @@ class FoodDataset(torch.utils.data.Dataset):
     Note: This dataset is set to load the 20 categories of images.
     Remove the train and test folders as they are the Food101 dataset.
     """
+    name="UMPC"
 
     def __init__(
         self, root: Union[Path, str], classes: List[str], transform=Optional[Callable]
@@ -192,6 +193,7 @@ class FoodDataset(torch.utils.data.Dataset):
             transform ([Callable], optional): transform to apply. Defaults to None.
         """
         super().__init__()
+        breakpoint()
         normalize_names = lambda x: x.replace("-", "_") 
         self.classes = [normalize_names(o) for o in classes]
         self.root = root

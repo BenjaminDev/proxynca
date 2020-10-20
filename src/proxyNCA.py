@@ -192,29 +192,15 @@ class DML(pl.LightningModule):
         x = self.embedding_layer(x)
         return x
 
-    def compute_loss(self, images, target, include_embeddings=False, drop_labels=False)->Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+    def compute_loss(self, images, target, include_embeddings=False)->Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         X = self(images)
         P = F.normalize(self.proxies, p = 2, dim = -1) * self.hparams.scaling_p
         X = F.normalize(X, p = 2, dim = -1) * self.hparams.scaling_x
         D = torch.cdist(X, P) ** 2
-        if drop_labels or True:
-            # Simple implementation of see section X of report.
-            #  Assume one in every 8 samples is labelled.
         
-            tk=D.topk(k=1, largest=False)
-            new_target=[]
-            for i, t in enumerate(target):
-                # Assume 7 in 8 samples has no label. TODO: Move this logic to the dataloader
-                if random.choices([True, True, True, True, True, True, True,False]):
-                    new_target.append(tk.indices[i].item())
-                else:
-                    new_target.append(t.item())
-            target = np.array(new_target)
-        else:
-            target = target.cpu().numpy()
-
         T = binarize_and_smooth_labels(target, len(P), self.hparams.smoothing_const).to(X.device)
-        
+        # TODO: If one wants to incorporate unlabelled data then it's advised to insert 
+        # distance proportional values into T.  
         # note that compared to proxy nca, positive included in denominator
         loss = torch.sum(-T * F.log_softmax(-D, -1), -1)
         if include_embeddings:
@@ -224,10 +210,7 @@ class DML(pl.LightningModule):
     def training_step(self, batch, batch_idx)-> Dict[str, Any]:
         """Run a batch from the train dataset through the model"""
         images, target, _ = batch
-        if False:
-            loss, Xs = self.compute_loss(images, target,include_embeddings=True)
-        else:
-            loss, Xs = self.compute_loss(images, target,include_embeddings=True)
+        loss, Xs = self.compute_loss(images, target,include_embeddings=True)
         self.log_dict({"train_loss": loss},prog_bar=True, on_step=True, on_epoch=True)
         return {"loss":loss, "Xs":Xs, "Ts":target }
 
