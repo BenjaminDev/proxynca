@@ -1,25 +1,32 @@
 from pytorch_lightning import Trainer
 import pytorch_lightning
 from pytorch_lightning.loggers import WandbLogger
-from omegaconf import OmegaConf 
-from data import DMLDataModule, make_transform_inception_v3, FoodDataset, CarsDataset, dataset_names
+from omegaconf import OmegaConf
+from data import (
+    DMLDataModule,
+    make_transform_inception_v3,
+    FoodDataset,
+    CarsDataset,
+    dataset_names,
+)
 from proxyNCA import DML
 from ast import literal_eval
 import wandb
-conf = OmegaConf.load('src/config.yml')
+
+conf = OmegaConf.load("src/config.yml")
 if conf.dataset.name in ["UMPC-G20", "UMPC-Food101"]:
     classes_filename = conf.dataset.classes_filename
     food_classes = FoodDataset.load_classes(classes_filename)
-    classes=food_classes[::2]
-    eval_classes=food_classes[1::2]
-    DataSetType=FoodDataset
+    classes = food_classes[::2]
+    eval_classes = food_classes[1::2]
+    DataSetType = FoodDataset
 
 elif conf.dataset.name in ["Cars196"]:
-    name="Cars196",
-    DataSetType=CarsDataset
-    root="/mnt/vol_b/cars"
-    classes=range(0, 98)
-    eval_classes=range(98, 196)
+    name = ("Cars196",)
+    DataSetType = CarsDataset
+    root = "/mnt/vol_b/cars"
+    classes = range(0, 98)
+    eval_classes = range(98, 196)
 else:
     raise NotImplementedError(f"Dataset {conf.dataset.name} is not supported!")
 
@@ -29,14 +36,14 @@ dm = DMLDataModule(
     root=conf.dataset.root,
     classes=classes,
     eval_classes=eval_classes,
-    
-
     batch_size=conf.model.batch_size,
     train_transform=make_transform_inception_v3(augment=True),
-    eval_transform=make_transform_inception_v3(augment=False)
+    eval_transform=make_transform_inception_v3(augment=False),
 )
 
-wandb_logger = WandbLogger(name=dm.name, project=conf.experiment.name, save_dir="/mnt/vol_b/models/few-shot")
+wandb_logger = WandbLogger(
+    name=dm.name, project=conf.experiment.name, save_dir="/mnt/vol_b/models/few-shot"
+)
 dm.setup(project_name=conf.experiment.name)
 
 
@@ -56,14 +63,15 @@ model = DML(
     scaling_p=conf.model.scaling_p,
     smoothing_const=conf.model.smoothing_const,
     batch_size=conf.model.batch_size,
-
     vis_dim=literal_eval(conf.model.vis_dim),
 )
 
 
-trainer = Trainer(max_epochs=conf.experiment.max_epochs, gpus=conf.experiment.gpus,
-                     logger=wandb_logger,
-                    gradient_clip_val=conf.model.gradient_clip_val,                     )
+trainer = Trainer(
+    max_epochs=conf.experiment.max_epochs,
+    gpus=conf.experiment.gpus,
+    logger=wandb_logger,
+    gradient_clip_val=conf.model.gradient_clip_val,
+)
 #  Start training
 trainer.fit(model, datamodule=dm)
-

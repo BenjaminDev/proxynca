@@ -20,18 +20,19 @@ import wandb
 cars_mean = (0.485, 0.456, 0.406)
 cars_std = (0.229, 0.224, 0.225)
 
+
 class DMLDataModule(pl.LightningDataModule):
-    """A generic Distance Metric Learning datamodule.
-    """
+    """A generic Distance Metric Learning datamodule."""
+
     def __init__(
         self,
-        name:str,
+        name: str,
         DataSetType,
-        root:Union[Path, str],
-        classes:List[Union[int, str]],
-        eval_classes:List[Union[int, str]],
-        train_transform:Callable,
-        eval_transform:Callable,
+        root: Union[Path, str],
+        classes: List[Union[int, str]],
+        eval_classes: List[Union[int, str]],
+        train_transform: Callable,
+        eval_transform: Callable,
         batch_size: int = 32,
     ) -> None:
         super().__init__()
@@ -45,7 +46,7 @@ class DMLDataModule(pl.LightningDataModule):
         self.batch_size = batch_size
         self.num_classes = len(classes)
 
-    def setup(self, project_name:str):
+    def setup(self, project_name: str):
         self.train_dataset = self.DataSetType(
             root=self.root, classes=self.classes, transform=self.train_transform
         )
@@ -56,13 +57,27 @@ class DMLDataModule(pl.LightningDataModule):
 
         def plot_class_distributions(ys, classes):
             import plotly.graph_objects as go
+
             labels, counts = zip(*Counter(ys).items())
-            labels=[classes[o] for o in labels]
+            labels = [classes[o] for o in labels]
             fig = go.Figure([go.Bar(x=labels, y=counts)])
             return fig
+
         wandb.init(name=self.name, project=project_name, reinit=True)
-        wandb.log({"Validation Class Distribution": plot_class_distributions(ys=self.val_dataset.ys, classes=self.val_dataset.classes)})
-        wandb.log({"Train Class Distribution": plot_class_distributions(ys=self.train_dataset.ys, classes=self.train_dataset.classes)})
+        wandb.log(
+            {
+                "Validation Class Distribution": plot_class_distributions(
+                    ys=self.val_dataset.ys, classes=self.val_dataset.classes
+                )
+            }
+        )
+        wandb.log(
+            {
+                "Train Class Distribution": plot_class_distributions(
+                    ys=self.train_dataset.ys, classes=self.train_dataset.classes
+                )
+            }
+        )
 
     def train_dataloader(self):
         return DataLoader(
@@ -119,7 +134,9 @@ class CarsDataset(torch.utils.data.Dataset):
     tar -xzvf car_ims.tgz
     ```
     """
-    name="Cars196"
+
+    name = "Cars196"
+
     def __init__(
         self, root: str, classes: List[int], transform: Optional[Callable] = None
     ):
@@ -168,19 +185,24 @@ class CarsDataset(torch.utils.data.Dataset):
     def get_label(self, index):
         return self.ys[index]
 
-    def get_label_description(self, label_idx:int)->Union[str, int]:
+    def get_label_description(self, label_idx: int) -> Union[str, int]:
         if self.class_descriptions:
             return self.class_descriptions[label_idx]
-        else: return str(label_idx)
+        else:
+            return str(label_idx)
+
 
 from collections import Counter
+
+
 class FoodDataset(torch.utils.data.Dataset):
     """
     Dataset for [UMPC-G20](http://visiir.lip6.fr/)
     Note: This dataset is set to load the 20 categories of images.
     Remove the train and test folders as they are the Food101 dataset.
     """
-    name="UMPC"
+
+    name = "UMPC"
 
     def __init__(
         self, root: Union[Path, str], classes: List[str], transform=Optional[Callable]
@@ -194,17 +216,24 @@ class FoodDataset(torch.utils.data.Dataset):
         """
         super().__init__()
 
-        normalize_names = lambda x: x.replace("-", "_") 
+        normalize_names = lambda x: x.replace("-", "_")
         self.classes = [normalize_names(o) for o in classes]
         self.root = root
         self.transform = transform
 
         valid_image_paths = sorted([p for p in Path(self.root).glob(f"**/**/*.jpg")])
 
-        self.im_paths = [p for p in valid_image_paths if normalize_names(p.parent.stem) in self.classes]
-        self.ys = [self.classes.index(normalize_names(p.parent.stem)) for p in self.im_paths]
-        print(f"Class Counts: {Counter([normalize_names(p.parent.stem) for p in self.im_paths])}")
-
+        self.im_paths = [
+            p
+            for p in valid_image_paths
+            if normalize_names(p.parent.stem) in self.classes
+        ]
+        self.ys = [
+            self.classes.index(normalize_names(p.parent.stem)) for p in self.im_paths
+        ]
+        print(
+            f"Class Counts: {Counter([normalize_names(p.parent.stem) for p in self.im_paths])}"
+        )
 
     def nb_classes(self):
         return len(self.classes)
@@ -221,10 +250,10 @@ class FoodDataset(torch.utils.data.Dataset):
             im = self.transform(im)
         return im, self.ys[index], index
 
-    def get_label(self, index:int)->int:
+    def get_label(self, index: int) -> int:
         return self.ys[index]
-    
-    def get_label_description(self, label_idx:int)->str:
+
+    def get_label_description(self, label_idx: int) -> str:
 
         return str(self.classes[label_idx])
 
@@ -232,9 +261,9 @@ class FoodDataset(torch.utils.data.Dataset):
     def load_classes(filename):
         with open(filename, mode="r") as fp:
             return [l.strip() for l in fp.readlines()]
-        
 
-dataset_names={FoodDataset:"UMP-G20", CarsDataset:"Cars196"}
+
+dataset_names = {FoodDataset: "UMP-G20", CarsDataset: "Cars196"}
 
 #################### Utils#########################
 def verify_image(fn):
@@ -273,14 +302,14 @@ def reduce_batch_of_one(image: torch.Tensor) -> torch.Tensor:
     return image.squeeze(0)
 
 
-def make_transform_inception_v3(augment=False)->torch.Tensor:
+def make_transform_inception_v3(augment=False) -> torch.Tensor:
     """Transformation pipeline for loading data into the inception_v3 backbone.
 
     Args:
         augment (bool, optional): if set data augmentation will be applied. Defaults to False.
 
     Returns:
-        [torch.Tensor]: returns image as tensor. 
+        [torch.Tensor]: returns image as tensor.
     """
 
     base_transforms = [
@@ -290,17 +319,16 @@ def make_transform_inception_v3(augment=False)->torch.Tensor:
     ]
 
     if augment:
-        base_transforms =base_transforms + [torch.nn.Sequential(
-            kornia.augmentation.RandomHorizontalFlip(),
-            # kornia.augmentation.RandomGrayscale(p=0.001),
-            kornia.augmentation.RandomRotation(degrees=180),
-        ), reduce_batch_of_one]
+        base_transforms = base_transforms + [
+            torch.nn.Sequential(
+                kornia.augmentation.RandomHorizontalFlip(),
+                # kornia.augmentation.RandomGrayscale(p=0.001),
+                kornia.augmentation.RandomRotation(degrees=180),
+            ),
+            reduce_batch_of_one,
+        ]
 
     return transforms.Compose(
-            base_transforms
-            + [
-                T.Normalize(
-                    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
-                )
-            ]
-        )
+        base_transforms
+        + [T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])]
+    )

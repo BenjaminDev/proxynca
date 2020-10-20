@@ -13,7 +13,7 @@ def assign_by_euclidian_at_k(X, T, k):
     """
     distances = torch.cdist(X, X)
     # get nearest points
-    indices = distances.topk(k + 1, largest=False)[1][:, 1: k + 1]
+    indices = distances.topk(k + 1, largest=False)[1][:, 1 : k + 1]
     return np.array([[T[i] for i in ii] for ii in indices])
 
 
@@ -40,6 +40,7 @@ def calc_normalized_mutual_information(ys, xs_clustered):
 
 if __name__ == "__main__":
     from random import randint
+
     T = [i for i in range(100)]
     Y = [[pred_label for pred_label in range(target, 100)] for target in range(100)]
     k = 10
