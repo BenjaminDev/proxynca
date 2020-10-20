@@ -1,60 +1,144 @@
-import pytorch_lightning as pl
-from torchvision import transforms
-from torch.utils.data import dataset
-import scipy.io
-
 import os
-import torch
-import torchvision
+from pathlib import Path
+from typing import Callable, List, Optional, Union
+
+import kornia
+import matplotlib.pyplot as plt
 import numpy as np
 import PIL.Image
-from torch.utils.data import DataLoader
-from torchvision import datasets
+import pytorch_lightning as pl
+import scipy.io
+import torch
 import torchvision.transforms as T
+from fastcore.utils import parallel
+from fastprogress import progress_bar
+from torch.utils.data import DataLoader, dataset
+from torchvision import transforms
+from torchvision.utils import make_grid
+import wandb
 
+cars_mean = (0.485, 0.456, 0.406)
+cars_std = (0.229, 0.224, 0.225)
 
-class BaseDataset(torch.utils.data.Dataset):
-    def __init__(self, root, classes, transform=None):
-        self.classes = classes
+class DMLDataModule(pl.LightningDataModule):
+    """A generic Distance Metric Learning datamodule.
+    """
+    def __init__(
+        self,
+        name:str,
+        DataSetType,
+        root:Union[Path, str],
+        classes:List[Union[int, str]],
+        eval_classes:List[Union[int, str]],
+        train_transform:Callable,
+        eval_transform:Callable,
+        batch_size: int = 32,
+    ) -> None:
+        super().__init__()
+        self.name = name
+        self.DataSetType = DataSetType
         self.root = root
-        self.transform = transform
-        self.ys, self.im_paths, self.I = [], [], []
+        self.classes = [o for o in classes]
+        self.eval_classes = eval_classes
+        self.train_transform = train_transform
+        self.eval_transform = eval_transform
+        self.batch_size = batch_size
+        self.num_classes = len(classes)
 
-    def nb_classes(self):
-        assert set(self.ys) == set(self.classes)
-        return len(self.classes)
+    def setup(self, project_name:str):
+        self.train_dataset = self.DataSetType(
+            root=self.root, classes=self.classes, transform=self.train_transform
+        )
 
-    def __len__(self):
-        return len(self.ys)
+        self.val_dataset = self.DataSetType(
+            root=self.root, classes=self.eval_classes, transform=self.eval_transform
+        )
 
-    def __getitem__(self, index):
-        im = PIL.Image.open(self.im_paths[index])
-        # convert gray to rgb
-        if len(list(im.split())) == 1:
-            im = im.convert("RGB")
-        if self.transform is not None:
-            im = self.transform(im)
-        return im, self.ys[index], index
+        def plot_class_distributions(ys, classes):
+            import plotly.graph_objects as go
+            labels, counts = zip(*Counter(ys).items())
+            labels=[classes[o] for o in labels]
+            fig = go.Figure([go.Bar(x=labels, y=counts)])
+            return fig
+        wandb.init(name=self.name, project=project_name, reinit=True)
+        wandb.log({"Validation Class Distribution": plot_class_distributions(ys=self.val_dataset.ys, classes=self.val_dataset.classes)})
+        wandb.log({"Train Class Distribution": plot_class_distributions(ys=self.train_dataset.ys, classes=self.train_dataset.classes)})
 
-    def get_label(self, index):
-        return self.ys[index]
+    def train_dataloader(self):
+        return DataLoader(
+            dataset=self.train_dataset,
+            batch_size=self.batch_size,
+            num_workers=os.cpu_count(),
+            shuffle=True,
+            pin_memory=True,
+        )
 
-    def set_subset(self, I):
-        self.ys = [self.ys[i] for i in I]
-        self.I = [self.I[i] for i in I]
-        self.im_paths = [self.im_paths[i] for i in I]
+    def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+
+        return DataLoader(
+            dataset=self.val_dataset,
+            batch_size=self.batch_size,
+            num_workers=os.cpu_count(),
+            shuffle=False,
+            pin_memory=True,
+        )
+
+    def show_batch(self, dl):
+        for images, labels, _ in dl:
+            fig, ax = plt.subplots(figsize=(16, 8))
+            ax.set_xticks([])
+            ax.set_yticks([])
+            # ax.set_xlabel("test")
+            data = self.denorm(images).clamp(0, 1)
+            ax.imshow(make_grid(data, nrow=16).permute(1, 2, 0))
+            break
+
+    def show_sample(self, img, target, invert=True):
+        img = self.denorm(img).clamp(0, 1)
+        if invert:
+            plt.set_xlabel(self.classes[target])
+            plt.imshow(1 - img.permute((1, 2, 0)))
+        else:
+            plt.title(f"{self.classes[target]}")
+            plt.imshow(img.permute(1, 2, 0))
+
+    @staticmethod
+    def denorm(img, mean=cars_mean, std=cars_std):
+        return img * torch.Tensor(std).unsqueeze(1).unsqueeze(1) + torch.Tensor(
+            mean
+        ).unsqueeze(1).unsqueeze(1)
 
 
 class CarsDataset(torch.utils.data.Dataset):
-    def __init__(self, root, classes, transform=None):
+    """
+    Loads the cars196 dataset.
+    To download:
+    ```
+    wget http://imagenet.stanford.edu/internal/car196/cars_annos.mat
+    wget http://imagenet.stanford.edu/internal/car196/car_ims.tgz
+    tar -xzvf car_ims.tgz
+    ```
+    """
+    name="Cars196"
+    def __init__(
+        self, root: str, classes: List[int], transform: Optional[Callable] = None
+    ):
+        """Holds the cars196 dataset
+           REF: https://github.com/dichotomies/proxy-nca
+        Args:
+            root (Union[Path, str]): Paths to `cars` directory.
+            classes (List[int]): List of valid labels range(0,196)
+            transform (Optional[Callable], optional): transform to apply. Defaults to None.
+        """
         super().__init__()
-        self.classes = classes
+        self.classes = [o for o in classes]
         self.root = root
         self.transform = transform
         self.ys, self.im_paths, self.I = [], [], []
-
         annos_fn = "cars_annos.mat"
         cars = scipy.io.loadmat(os.path.join(root, annos_fn))
+        self.class_descriptions = [o[0] for o in cars["class_names"][0]]
+        self.cars = cars
         ys = [int(a[5][0] - 1) for a in cars["annotations"][0]]
         im_paths = [a[0][0] for a in cars["annotations"][0]]
         index = 0
@@ -84,193 +168,139 @@ class CarsDataset(torch.utils.data.Dataset):
     def get_label(self, index):
         return self.ys[index]
 
-    def set_subset(self, I):
-        self.ys = [self.ys[i] for i in I]
-        self.I = [self.I[i] for i in I]
-        self.im_paths = [self.im_paths[i] for i in I]
+    def get_label_description(self, label_idx:int)->Union[str, int]:
+        if self.class_descriptions:
+            return self.class_descriptions[label_idx]
+        else: return str(label_idx)
 
+from collections import Counter
+class FoodDataset(torch.utils.data.Dataset):
+    """
+    Dataset for [UMPC-G20](http://visiir.lip6.fr/)
+    Note: This dataset is set to load the 20 categories of images.
+    Remove the train and test folders as they are the Food101 dataset.
+    """
+    name="UMPC"
 
-def std_per_channel(images):
-    images = torch.stack(images, dim=0)
-    return images.view(3, -1).std(dim=1)
-
-
-def mean_per_channel(images):
-    images = torch.stack(images, dim=0)
-    return images.view(3, -1).mean(dim=1)
-
-
-class Identity:  # used for skipping transforms
-    def __call__(self, im):
-        return im
-
-
-class RGBToBGR:
-    def __call__(self, im):
-        assert im.mode == "RGB"
-        r, g, b = [im.getchannel(i) for i in range(3)]
-        # RGB mode also for BGR, `3x8-bit pixels, true color`, see PIL doc
-        im = PIL.Image.merge("RGB", [b, g, r])
-        return im
-
-
-class ScaleIntensities:
-    def __init__(self, in_range, out_range):
-        """ Scales intensities. For example [-1, 1] -> [0, 255]."""
-        self.in_range = in_range
-        self.out_range = out_range
-
-    def __oldcall__(self, tensor):
-        tensor.mul_(255)
-        return tensor
-
-    def __call__(self, tensor):
-        tensor = (tensor - self.in_range[0]) / (self.in_range[1] - self.in_range[0]) * (
-            self.out_range[1] - self.out_range[0]
-        ) + self.out_range[0]
-        return tensor
-
-
-def make_transform(
-    sz_resize=256,
-    sz_crop=227,
-    mean=[104, 117, 128],
-    std=[1, 1, 1],
-    rgb_to_bgr=True,
-    is_train=True,
-    intensity_scale=None,
-):
-    return transforms.Compose(
-        [
-            RGBToBGR() if rgb_to_bgr else Identity(),
-            transforms.RandomResizedCrop(sz_crop) if is_train else Identity(),
-            transforms.Resize(sz_resize) if not is_train else Identity(),
-            transforms.CenterCrop(sz_crop) if not is_train else Identity(),
-            transforms.RandomHorizontalFlip() if is_train else Identity(),
-            transforms.ToTensor(),
-            ScaleIntensities(*intensity_scale)
-            if intensity_scale is not None
-            else Identity(),
-            transforms.Normalize(
-                mean=mean,
-                std=std,
-            ),
-        ]
-    )
-
-
-class CarsDataModule(pl.LightningDataModule):
     def __init__(
-        self, root, classes, test_classes, transform=None, batch_size: int = 32
-    ) -> None:
+        self, root: Union[Path, str], classes: List[str], transform=Optional[Callable]
+    ):
+        """Dataset for [UMPC-G20](http://visiir.lip6.fr/)
+
+        Args:
+            root (Path): path to `images` folder.
+            classes (List[str]): list of classes to load.
+            transform ([Callable], optional): transform to apply. Defaults to None.
+        """
         super().__init__()
-        self.transform = transform if transform else make_transform()
+
+        normalize_names = lambda x: x.replace("-", "_") 
+        self.classes = [normalize_names(o) for o in classes]
         self.root = root
-        self.test_classes = test_classes
-        self.classes = classes
-        self.batch_size = batch_size
-        # self.save_hyperparameters()
+        self.transform = transform
 
-    def train_dataloader(self):
+        valid_image_paths = sorted([p for p in Path(self.root).glob(f"**/**/*.jpg")])
 
-        # transforms = transform_lib.Compose([
-        #     transform_lib.ToTensor(),
-        #     transform_lib.Normalize(mean=(0.5,), std=(0.5,)),
-        # ])
+        self.im_paths = [p for p in valid_image_paths if normalize_names(p.parent.stem) in self.classes]
+        self.ys = [self.classes.index(normalize_names(p.parent.stem)) for p in self.im_paths]
+        print(f"Class Counts: {Counter([normalize_names(p.parent.stem) for p in self.im_paths])}")
 
-        dataset = CarsDataset(
-            root=self.root, classes=self.classes, transform=self.transform
+
+    def nb_classes(self):
+        return len(self.classes)
+
+    def __len__(self):
+        return len(self.ys)
+
+    def __getitem__(self, index):
+        im = PIL.Image.open(self.im_paths[index])
+        # convert gray to rgb
+        if len(list(im.split())) == 1:
+            im = im.convert("RGB")
+        if self.transform is not None:
+            im = self.transform(im)
+        return im, self.ys[index], index
+
+    def get_label(self, index:int)->int:
+        return self.ys[index]
+    
+    def get_label_description(self, label_idx:int)->str:
+
+        return str(self.classes[label_idx])
+
+    @staticmethod
+    def load_classes(filename):
+        with open(filename, mode="r") as fp:
+            return [l.strip() for l in fp.readlines()]
+        
+
+dataset_names={FoodDataset:"UMP-G20", CarsDataset:"Cars196"}
+
+#################### Utils#########################
+def verify_image(fn):
+    "Confirm that `fn` can be opened. REF: fastai."
+    try:
+        im = PIL.Image.open(fn)
+        im.draft(im.mode, (32, 32))
+        im.load()
+        return fn
+    except:
+        os.remove(fn)
+        return None
+
+
+def remove_broken_images(image_paths: List[Path]) -> List:
+    """removes images that cannot be opened by PIL.
+
+    Args:
+        image_paths (List[Path]): List of `Path`s to images that are to be checked.
+
+    Returns:
+        List: List of `Path`s where all paths are to valid images.
+    """
+    return parallel(verify_image, image_paths, progress=progress_bar, threadpool=True)
+
+
+def reduce_batch_of_one(image: torch.Tensor) -> torch.Tensor:
+    """reduces a tensor along the batch dimension
+
+    Args:
+        image (torch.Tensor): batch of one reduce
+
+    Returns:
+        torch.Tensor: image
+    """
+    return image.squeeze(0)
+
+
+def make_transform_inception_v3(augment=False)->torch.Tensor:
+    """Transformation pipeline for loading data into the inception_v3 backbone.
+
+    Args:
+        augment (bool, optional): if set data augmentation will be applied. Defaults to False.
+
+    Returns:
+        [torch.Tensor]: returns image as tensor. 
+    """
+
+    base_transforms = [
+        T.Resize(299),
+        T.CenterCrop(299),
+        T.ToTensor(),
+    ]
+
+    if augment:
+        base_transforms =base_transforms + [torch.nn.Sequential(
+            kornia.augmentation.RandomHorizontalFlip(),
+            # kornia.augmentation.RandomGrayscale(p=0.001),
+            kornia.augmentation.RandomRotation(degrees=180),
+        ), reduce_batch_of_one]
+
+    return transforms.Compose(
+            base_transforms
+            + [
+                T.Normalize(
+                    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+                )
+            ]
         )
-        return DataLoader(
-            dataset=dataset, batch_size=self.batch_size, num_workers=os.cpu_count(), shuffle=True,
-            pin_memory=True
-        )
-
-    def test_dataloader(self):
-        dataset = CarsDataset(
-            root=self.root, classes=self.test_classes, transform=self.transform
-        )
-        return DataLoader(
-            dataset=dataset, batch_size=self.batch_size, num_workers=os.cpu_count(), shuffle=False,
-            pin_memory=True
-        )
-
-
-class UPMCFood101DataModule(pl.LightningDataModule):
-    def __init__(self, data_dir: str = "./data"):
-        super().__init__()
-        self.data_dir = data_dir
-        self.transform = transforms.Compose(
-            [transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))]
-        )
-
-        # self.dims is returned when you call dm.size()
-        # Setting default dims here because we know them.
-        # Could optionally be assigned dynamically in dm.setup()
-        self.dims = (1, 28, 28)
-
-    def prepare_data(self):
-        # download
-        pass
-        # TODO: down load data if it's not available locally.
-        # MNIST(self.data_dir, train=True, download=True)
-        # MNIST(self.data_dir, train=False, download=True)
-
-    def setup(self, stage=None):
-        pass
-        # Assign train/val datasets for use in dataloaders
-        # if stage == 'fit' or stage is None:
-        #     mnist_full = MNIST(self.data_dir, train=True, transform=self.transform)
-        #     self._train, self.mnist_val = random_split(mnist_full, [55000, 5000])
-
-        #     # Optionally...
-        #     # self.dims = tuple(self.mnist_train[0][0].shape)
-
-        # # Assign test dataset for use in dataloader(s)
-        # if stage == 'test' or stage is None:
-        #     self.mnist_test = MNIST(self.data_dir, train=False, transform=self.transform)
-
-        # Optionally...
-        # self.dims = tuple(self.mnist_test[0][0].shape)
-
-    def train_dataloader(self):
-        self.UPMCFood101_train = dataset
-        return DataLoader(self.mnist_train, batch_size=32)
-
-    def val_dataloader(self):
-        return DataLoader(self.mnist_val, batch_size=32)
-
-    def test_dataloader(self):
-        return DataLoader(self, batch_size=32)
-
-
-# import hydra
-# from omegaconf import DictConfig, OmegaConf
-
-# @hydra.main(config_name="config.yml")
-def main():
-
-    dm = CarsDataModule(
-        root="/mnt/c/Users/benja/workspace/data/cars", classes=range(0, 98)
-    )
-    breakpoint()
-
-
-if __name__ == "__main__":
-    main()
-
-# dl_ev = torch.utils.data.DataLoader(
-#     dataset.load(
-#         name = args.dataset,
-#         root = config['dataset'][args.dataset]['root'],
-#         classes = config['dataset'][args.dataset]['classes']['eval'],
-#         transform = dataset.utils.make_transform(
-#             **config['transform_parameters'],
-#             is_train = False
-#         )
-#     ),
-#     batch_size = args.sz_batch,
-#     shuffle = False,
-#     num_workers = args.nb_workers,
-#     pin_memory = True
-# )

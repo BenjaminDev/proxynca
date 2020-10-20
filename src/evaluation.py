@@ -1,3 +1,5 @@
+# REF https://github.com/dichotomies/proxy-nca
+# All functions taken from https://github.com/dichotomies/proxy-nca
 import sklearn.cluster
 import sklearn.metrics.cluster
 import numpy as np
@@ -11,8 +13,8 @@ def assign_by_euclidian_at_k(X, T, k):
     """
     distances = torch.cdist(X, X)
     # get nearest points
-    indices = distances.topk(k + 1, largest=False)[1][:, 1 : k + 1]
-    return T[indices]
+    indices = distances.topk(k + 1, largest=False)[1][:, 1: k + 1]
+    return np.array([[T[i] for i in ii] for ii in indices])
 
 
 def calc_recall_at_k(T, Y, k):
@@ -34,3 +36,11 @@ def cluster_by_kmeans(X, nb_clusters):
 
 def calc_normalized_mutual_information(ys, xs_clustered):
     return sklearn.metrics.cluster.normalized_mutual_info_score(xs_clustered, ys)
+
+
+if __name__ == "__main__":
+    from random import randint
+    T = [i for i in range(100)]
+    Y = [[pred_label for pred_label in range(target, 100)] for target in range(100)]
+    k = 10
+    print(calc_recall_at_k(T, Y, k))
