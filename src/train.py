@@ -36,8 +36,8 @@ dm = DMLDataModule(
     eval_transform=make_transform_inception_v3(augment=False)
 )
 
-wandb_logger = WandbLogger(name=dm.name, project=dataset_names[DataSetType], save_dir="/mnt/vol_b/models/few-shot")
-dm.setup(project_name=dataset_names[DataSetType])
+wandb_logger = WandbLogger(name=dm.name, project=conf.experiment.name, save_dir="/mnt/vol_b/models/few-shot")
+dm.setup(project_name=conf.experiment.name)
 
 
 model = DML(

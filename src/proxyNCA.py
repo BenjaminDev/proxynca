@@ -321,7 +321,7 @@ class DML(pl.LightningModule):
             image_dict[f"global step {self.global_step} example: {i}"].extend([wandb.Image(Image.open(self.val_dataset.im_paths[val_indexes[idx]]), caption=f"retrival:({rank}) {self.val_dataset.get_label_description(self.val_dataset.get_label(val_indexes[idx]))}") for rank, idx in enumerate(example_result[1:])])
         self.logger.experiment.log(image_dict) 
         
-        # Since validation set samples are iid I prefer looking at a histogram of valitation losses.
+        # Since validation set samples are iid I prefer looking at a histogram of validation losses.
         wandb.log({f"val_loss_hist": wandb.Histogram([[h["val_loss"] for h in outputs]])})    
 
     def configure_optimizers(self):
@@ -355,7 +355,7 @@ class DML(pl.LightningModule):
             ],
         )
 
-        scheduler = lr_scheduler.ExponentialLR(optimizer, gamma=0.94)
-        # scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.hparams.lr)
+        # scheduler = lr_scheduler.ExponentialLR(optimizer, gamma=0.94)
+        scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.hparams.lr)
 
         return [optimizer], [scheduler]

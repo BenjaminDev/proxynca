@@ -1,4 +1,5 @@
-
+## Basic Usage
+1. clone the repo `g`
 ## TODO:
 1. check the recall on the train set (Done but looks crap!)
 2. get the original implementation up and running (Done and it seems to be working!)

@@ -1,6 +1,6 @@
 
 experiment: 
-    name: "ProxyNCA"
+    name: "ProxyNCA-v2"
     max_epochs: 50
     gpus: 1
 
